@@ -2,7 +2,7 @@
 //  DropcutApp.swift
 //  Dropcut
 //
-//  Created by Katherine Palevich on 5/25/26.
+//  Created by Katherine Palevich & Jason Guo on 5/25/26.
 //
 
 import SwiftUI
