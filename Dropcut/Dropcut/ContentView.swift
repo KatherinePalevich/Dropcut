@@ -16,6 +16,8 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var navigationPath = NavigationPath()
     
+    @Query(sort: \Project.timestamp, order: .reverse) private var projects: [Project]
+    
     // Preferences screen state
     @State private var selectedContent: String? = nil
     @State private var durationSeconds: Int = 15
@@ -23,34 +25,73 @@ struct ContentView: View {
     
     // Import clips screen state
     @State private var selectedVideos: [VideoClip] = []
+    @State private var editingProject: Project? = nil
 
     
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            WelcomeView(navigationPath: $navigationPath)
-                .navigationDestination(for: AppScreen.self) { screen in
-                    switch screen {
-                    case .welcome:
-                        WelcomeView(navigationPath: $navigationPath)
-                    case .preferences:
-                        PreferencesView(
-                            navigationPath: $navigationPath,
-                            selectedContent: $selectedContent,
-                            durationSeconds: $durationSeconds
-                        )
-                    case .importClips:
-                        ImportClipsView(
-                            navigationPath: $navigationPath,
-                            selectedVideos: $selectedVideos
-                        )
-                    case .videoEditor:
-                        VideoEditorView(
-                            navigationPath: $navigationPath,
-                            selectedVideos: $selectedVideos
-                        )
-                    }
+            Group {
+                if projects.isEmpty {
+                    WelcomeView(navigationPath: $navigationPath)
+                } else {
+                    ProjectsHomeView(
+                        navigationPath: $navigationPath,
+                        startNewProject: startNewProject,
+                        editProject: { project in
+                            self.editingProject = project
+                            if project.safeClipPaths.isEmpty, let videoPath = project.videoPath {
+                                // Fallback for legacy projects (use combined video as single clip)
+                                let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                                let url = documentsURL.appendingPathComponent(videoPath)
+                                self.selectedVideos = [VideoClip(url: url, title: project.name)]
+                            } else {
+                                // Map saved clips
+                                self.selectedVideos = project.safeClipPaths.indices.map { index in
+                                    let relativePath = project.safeClipPaths[index]
+                                    let title = project.safeClipTitles[index]
+                                    let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                                    let url = documentsURL.appendingPathComponent(relativePath)
+                                    return VideoClip(url: url, title: title)
+                                }
+                            }
+                            navigationPath.append(AppScreen.videoEditor)
+                        }
+                    )
                 }
+            }
+            .navigationDestination(for: AppScreen.self) { screen in
+                switch screen {
+                case .welcome:
+                    WelcomeView(navigationPath: $navigationPath)
+                case .preferences:
+                    PreferencesView(
+                        navigationPath: $navigationPath,
+                        selectedContent: $selectedContent,
+                        durationSeconds: $durationSeconds
+                    )
+                case .importClips:
+                    ImportClipsView(
+                        navigationPath: $navigationPath,
+                        selectedVideos: $selectedVideos
+                    )
+                case .videoEditor:
+                    VideoEditorView(
+                        navigationPath: $navigationPath,
+                        selectedVideos: $selectedVideos,
+                        editingProject: $editingProject
+                    )
+                }
+            }
         }
+    }
+    
+    private func startNewProject() {
+        selectedContent = nil
+        durationSeconds = 15
+        selectedVideos = []
+        editingProject = nil
+        navigationPath = NavigationPath()
+        navigationPath.append(AppScreen.preferences)
     }
 }
 
@@ -266,52 +307,43 @@ struct ImportClipsView: View {
                                 ProgressView()
                                     .padding(.trailing, 8)
                             }
-                            
-                            // Mock loader helper for testing
-                            Button(action: loadSampleClips) {
-                                Label("Load Samples", systemImage: "arrow.down.circle")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                            }
                         }
                         .padding(.horizontal, 20)
                         
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            LazyHGrid(rows: [
-                                GridItem(.fixed(120), spacing: 12),
-                                GridItem(.fixed(120), spacing: 12)
-                            ], spacing: 12) {
-                                // Add button inside grid
-                                PhotosPicker(
-                                    selection: $pickerItems,
-                                    maxSelectionCount: 10,
-                                    matching: .videos
-                                ) {
-                                    VStack(spacing: 8) {
-                                        Image(systemName: "video.badge.plus")
-                                            .font(.system(size: 28))
-                                            .foregroundColor(.accentColor)
-                                        Text("Import Video")
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.accentColor)
-                                    }
-                                    .frame(width: 140, height: 120)
-                                    .background(Color.accentColor.opacity(0.08))
-                                    .cornerRadius(16)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                            .stroke(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
-                                    )
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 12),
+                            GridItem(.flexible(), spacing: 12)
+                        ], spacing: 12) {
+                            // Add button inside grid
+                            PhotosPicker(
+                                selection: $pickerItems,
+                                maxSelectionCount: 10,
+                                matching: .videos
+                            ) {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "video.badge.plus")
+                                        .font(.system(size: 28))
+                                        .foregroundColor(.accentColor)
+                                    Text("Import Video")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.accentColor)
                                 }
-                                
-                                ForEach(selectedVideos) { video in
-                                    VideoPlayerThumbnail(video: video)
-                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 120)
+                                .background(Color.accentColor.opacity(0.08))
+                                .cornerRadius(16)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .stroke(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                                )
                             }
-                            .padding(.horizontal, 20)
-                            .frame(height: 252) // 2 rows of 120 + 12 spacing
+                            
+                            ForEach(selectedVideos) { video in
+                                VideoPlayerThumbnail(video: video)
+                            }
                         }
+                        .padding(.horizontal, 20)
                     }
                 }
             }
@@ -362,18 +394,6 @@ struct ImportClipsView: View {
                 }
             }
         }
-    }
-    
-    // Help load public test clips in Simulator
-    private func loadSampleClips() {
-        let samples = [
-            VideoClip(url: URL(string: "https://developer.apple.com/videos/mp4/subtitles_sample.mp4")!, title: "Intro"),
-            VideoClip(url: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4")!, title: "Action"),
-            VideoClip(url: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4")!, title: "Outro"),
-            VideoClip(url: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4")!, title: "B-Roll"),
-            VideoClip(url: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4")!, title: "Teaser")
-        ]
-        selectedVideos.append(contentsOf: samples)
     }
 }
 
@@ -429,7 +449,8 @@ struct VideoPlayerThumbnail: View {
                 )
             }
         }
-        .frame(width: 140, height: 120)
+        .frame(maxWidth: .infinity)
+        .frame(height: 120)
         .cornerRadius(16)
         .clipped()
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
@@ -515,7 +536,7 @@ func copyVideoToTemporaryDirectory(from url: URL) -> URL? {
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(for: Project.self, inMemory: true)
 }
 
 // Custom Transferable representation for Video files from PhotosPicker

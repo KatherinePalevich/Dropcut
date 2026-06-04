@@ -5,37 +5,28 @@
 
 import SwiftUI
 import AVKit
-
+import Photos
+import AVFoundation
+import SwiftData
+import UniformTypeIdentifiers
 
 struct VideoEditorView: View {
+    @Environment(\.modelContext) private var modelContext
     @Binding var navigationPath: NavigationPath
     @Binding var selectedVideos: [VideoClip]
+    @Binding var editingProject: Project?
     
     @State private var activePlayer: AVPlayer? = nil
     @State private var selectedClip: VideoClip? = nil
+    @State private var draggingClip: VideoClip? = nil
+    
+    @State private var isExporting = false
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
     
     var body: some View {
         VStack(spacing: 0) {
-            // Main workspace/editor title
-            HStack {
-                Text("Video Editor")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                Spacer()
-                
-                Button(action: {
-                    // Go back to the welcome screen / pop all
-                    navigationPath = NavigationPath()
-                }) {
-                    Text("Done")
-                        .fontWeight(.semibold)
-                        .foregroundColor(.accentColor)
-                }
-            }
-            .padding()
-            .background(Color(.systemBackground))
-            
             // Video Preview Area
             ZStack {
                 Color.black
@@ -82,44 +73,6 @@ struct VideoEditorView: View {
                 activePlayer = nil
             }
             
-            // Timeline Controls
-            HStack(spacing: 24) {
-                Button(action: {}) {
-                    VStack {
-                        Image(systemName: "scissors")
-                        Text("Split").font(.caption)
-                    }
-                }
-                Button(action: {}) {
-                    VStack {
-                        Image(systemName: "plus.circle")
-                        Text("Add Clip").font(.caption)
-                    }
-                }
-                Button(action: {}) {
-                    VStack {
-                        Image(systemName: "textformat")
-                        Text("Text").font(.caption)
-                    }
-                }
-                Button(action: {}) {
-                    VStack {
-                        Image(systemName: "music.note")
-                        Text("Audio").font(.caption)
-                    }
-                }
-                Button(action: {}) {
-                    VStack {
-                        Image(systemName: "slider.horizontal.3")
-                        Text("Adjust").font(.caption)
-                    }
-                }
-            }
-            .foregroundColor(.primary)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity)
-            .background(Color(.secondarySystemBackground))
-            
             // Timeline Tracks
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -158,28 +111,17 @@ struct VideoEditorView: View {
                                     activePlayer = player
                                     player.play()
                                 }
+                                .onDrag {
+                                    self.draggingClip = video
+                                    return NSItemProvider(object: video.id.uuidString as NSString)
+                                }
+                                .onDrop(of: [.text], delegate: ClipDropDelegate(
+                                    item: video,
+                                    items: $selectedVideos,
+                                    draggedItem: $draggingClip
+                                ))
                             }
                         }
-                    }
-                    
-                    // Audio Track
-                    HStack(spacing: 4) {
-                        Image(systemName: "waveform")
-                            .foregroundColor(.green)
-                            .padding(.leading, 8)
-                        
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.green.opacity(0.3))
-                            .frame(width: 358, height: 24)
-                            .overlay(
-                                HStack {
-                                    Text("bg_music.mp3")
-                                        .font(.caption2)
-                                        .foregroundColor(.green)
-                                        .padding(.leading, 8)
-                                    Spacer()
-                                }
-                            )
                     }
                 }
                 .padding(.vertical)
@@ -187,9 +129,213 @@ struct VideoEditorView: View {
             .background(Color(.systemGroupedBackground))
             
             Spacer()
+            
+            // Download Button
+            Button(action: {
+                exportAndUploadVideo()
+            }) {
+                HStack(spacing: 8) {
+                    if isExporting {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.headline)
+                    }
+                    
+                    Text(isExporting ? "Combining & Saving..." : "Download Video")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    selectedVideos.isEmpty || isExporting
+                        ? AnyView(Color.gray.opacity(0.5))
+                        : AnyView(LinearGradient(gradient: Gradient(colors: [.accentColor, .purple]), startPoint: .leading, endPoint: .trailing))
+                )
+                .cornerRadius(16)
+                .shadow(color: !selectedVideos.isEmpty && !isExporting ? .accentColor.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
+            }
+            .buttonStyle(ScaleButtonStyle())
+            .disabled(selectedVideos.isEmpty || isExporting)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
         }
+        .navigationTitle("Editor")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false) // Let native back button show
+        .alert(alertTitle, isPresented: $showAlert) {
+            Button("OK") {
+                if alertTitle == "Success!" {
+                    navigationPath = NavigationPath()
+                }
+            }
+        } message: {
+            Text(alertMessage)
+        }
+    }
+    
+    // Combine selected video clips and save to device Photos Library
+    private func exportAndUploadVideo() {
+        guard !selectedVideos.isEmpty else { return }
+        isExporting = true
+        
+        Task {
+            do {
+                let composition = AVMutableComposition()
+                guard let compositionVideoTrack = composition.addMutableTrack(
+                    withMediaType: .video,
+                    preferredTrackID: kCMPersistentTrackID_Invalid
+                ) else {
+                    throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not create video composition track."])
+                }
+                
+                guard let compositionAudioTrack = composition.addMutableTrack(
+                    withMediaType: .audio,
+                    preferredTrackID: kCMPersistentTrackID_Invalid
+                ) else {
+                    throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not create audio composition track."])
+                }
+                
+                var currentTime = CMTime.zero
+                var isFirst = true
+                
+                for clip in selectedVideos {
+                    let asset = AVAsset(url: clip.url)
+                    
+                    // Load tracks and duration asynchronously
+                    let videoTracks = try await asset.loadTracks(withMediaType: .video)
+                    let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+                    let duration = try await asset.load(.duration)
+                    
+                    guard let assetVideoTrack = videoTracks.first else { continue }
+                    
+                    // Apply preferredTransform from the first video track to preserve correct rotation
+                    if isFirst {
+                        let transform = try await assetVideoTrack.load(.preferredTransform)
+                        compositionVideoTrack.preferredTransform = transform
+                        isFirst = false
+                    }
+                    
+                    let timeRange = CMTimeRange(start: .zero, duration: duration)
+                    try compositionVideoTrack.insertTimeRange(timeRange, of: assetVideoTrack, at: currentTime)
+                    
+                    if let assetAudioTrack = audioTracks.first {
+                        try compositionAudioTrack.insertTimeRange(timeRange, of: assetAudioTrack, at: currentTime)
+                    }
+                    
+                    currentTime = CMTimeAdd(currentTime, duration)
+                }
+                
+                guard currentTime.seconds > 0 else {
+                    throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "No video content found to export."])
+                }
+                
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("mp4")
+                
+                guard let exportSession = AVAssetExportSession(
+                    asset: composition,
+                    presetName: AVAssetExportPresetHighestQuality
+                ) else {
+                    throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not create export session."])
+                }
+                
+                exportSession.outputURL = tempURL
+                exportSession.outputFileType = .mp4
+                exportSession.shouldOptimizeForNetworkUse = true
+                
+                await exportSession.export()
+                
+                if exportSession.status == .completed {
+                    // Check and request Photo Library authorization
+                    let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+                    guard status == .authorized || status == .limited else {
+                        throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Photo Library access denied. Please enable it in Settings."])
+                    }
+                    
+                    try await PHPhotoLibrary.shared().performChanges {
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: tempURL)
+                    }
+                    
+                    // Copy video to permanent directory
+                    let permanentFileName = try Project.saveVideoToPermanentDirectory(from: tempURL)
+                    
+                    // Copy individual clips to permanent directory
+                    var finalClipPaths: [String] = []
+                    var finalClipTitles: [String] = []
+                    
+                    for clip in selectedVideos {
+                        let relativePath = try Project.saveClipToPermanentDirectory(from: clip.url)
+                        finalClipPaths.append(relativePath)
+                        finalClipTitles.append(clip.title)
+                    }
+                    
+                    await MainActor.run {
+                        let fileManager = FileManager.default
+                        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        
+                        if let existingProject = editingProject {
+                            // Update existing project
+                            // 1. Delete old combined video from disk
+                            if let oldVideoPath = existingProject.videoPath {
+                                let oldVideoURL = documentsURL.appendingPathComponent(oldVideoPath)
+                                try? fileManager.removeItem(at: oldVideoURL)
+                            }
+                            
+                            // 2. Identify clip files that are no longer used and delete them
+                            let oldClipPaths = existingProject.safeClipPaths
+                            for oldPath in oldClipPaths {
+                                if !finalClipPaths.contains(oldPath) {
+                                    let oldClipURL = documentsURL.appendingPathComponent(oldPath)
+                                    try? fileManager.removeItem(at: oldClipURL)
+                                }
+                            }
+                            
+                            // 3. Update project details
+                            existingProject.videoPath = permanentFileName
+                            existingProject.clipPaths = finalClipPaths
+                            existingProject.clipTitles = finalClipTitles
+                            existingProject.timestamp = Date()
+                            
+                            editingProject = nil // Reset editing project binding
+                        } else {
+                            // Create new project
+                            let allProjects = (try? modelContext.fetch(FetchDescriptor<Project>())) ?? []
+                            let newName = Project.nextProjectName(existingProjects: allProjects)
+                            let newProject = Project(
+                                name: newName,
+                                videoPath: permanentFileName,
+                                clipPaths: finalClipPaths,
+                                clipTitles: finalClipTitles
+                            )
+                            modelContext.insert(newProject)
+                        }
+                        
+                        try? modelContext.save()
+                        
+                        isExporting = false
+                        alertTitle = "Success!"
+                        alertMessage = "Your video has been combined and saved to your Photo Library."
+                        showAlert = true
+                    }
+                } else {
+                    let errorDesc = exportSession.error?.localizedDescription ?? "Export failed with an unknown error."
+                    throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: errorDesc])
+                }
+                
+            } catch {
+                await MainActor.run {
+                    isExporting = false
+                    alertTitle = "Upload Failed"
+                    alertMessage = error.localizedDescription
+                    showAlert = true
+                }
+            }
+        }
     }
 }
 
@@ -238,8 +384,38 @@ struct TimelineClipView: View {
             navigationPath: .constant(NavigationPath()),
             selectedVideos: .constant([
                 VideoClip(url: URL(string: "https://developer.apple.com/videos/mp4/subtitles_sample.mp4")!, title: "Intro")
-            ])
+            ]),
+            editingProject: .constant(nil)
         )
+    }
+}
+
+// MARK: - Drag and Drop Delegate
+struct ClipDropDelegate: DropDelegate {
+    let item: VideoClip
+    @Binding var items: [VideoClip]
+    @Binding var draggedItem: VideoClip?
+    
+    func performDrop(info: DropInfo) -> Bool {
+        draggedItem = nil
+        return true
+    }
+    
+    func dropEntered(info: DropInfo) {
+        guard let draggedItem = draggedItem else { return }
+        if draggedItem != item {
+            let from = items.firstIndex(of: draggedItem)
+            let to = items.firstIndex(of: item)
+            if let from = from, let to = to {
+                withAnimation {
+                    items.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+                }
+            }
+        }
+    }
+    
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        return DropProposal(operation: .move)
     }
 }
 
