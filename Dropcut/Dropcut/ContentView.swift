@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 enum AppScreen: Hashable {
     case welcome
     case preferences
+    case instructions
     case importClips
     case videoEditor
 }
@@ -21,6 +22,7 @@ struct ContentView: View {
     // Preferences screen state
     @State private var selectedContent: String? = nil
     @State private var durationSeconds: Int = 15
+    @State private var customInstructions: String = ""
 
     
     // Import clips screen state
@@ -67,7 +69,14 @@ struct ContentView: View {
                     PreferencesView(
                         navigationPath: $navigationPath,
                         selectedContent: $selectedContent,
-                        durationSeconds: $durationSeconds
+                        durationSeconds: $durationSeconds,
+                        isFirstProject: projects.isEmpty
+                    )
+                case .instructions:
+                    InstructionsView(
+                        navigationPath: $navigationPath,
+                        selectedContent: selectedContent ?? "",
+                        instructionsText: $customInstructions
                     )
                 case .importClips:
                     ImportClipsView(
@@ -78,7 +87,8 @@ struct ContentView: View {
                     VideoEditorView(
                         navigationPath: $navigationPath,
                         selectedVideos: $selectedVideos,
-                        editingProject: $editingProject
+                        editingProject: $editingProject,
+                        customInstructions: $customInstructions
                     )
                 }
             }
@@ -88,6 +98,7 @@ struct ContentView: View {
     private func startNewProject() {
         selectedContent = nil
         durationSeconds = 15
+        customInstructions = ""
         selectedVideos = []
         editingProject = nil
         navigationPath = NavigationPath()
@@ -174,6 +185,7 @@ struct PreferencesView: View {
     @Binding var navigationPath: NavigationPath
     @Binding var selectedContent: String?
     @Binding var durationSeconds: Int
+    let isFirstProject: Bool
     
     let categories = [
         ("Food", "fork.knife"),
@@ -245,7 +257,11 @@ struct PreferencesView: View {
             
             // Next Button
             Button(action: {
-                navigationPath.append(AppScreen.importClips)
+                if isFirstProject {
+                    navigationPath.append(AppScreen.importClips)
+                } else {
+                    navigationPath.append(AppScreen.instructions)
+                }
             }) {
                 Text("Next")
                     .font(.headline)
@@ -266,6 +282,168 @@ struct PreferencesView: View {
             .padding(.bottom, 20)
         }
         .navigationTitle("Preferences")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Instructions View (Screen 2.5)
+struct InstructionsView: View {
+    @Binding var navigationPath: NavigationPath
+    let selectedContent: String
+    @Binding var instructionsText: String
+    @FocusState private var isInputActive: Bool
+    
+    var suggestions: [String] {
+        switch selectedContent {
+        case "Food":
+            return ["Steady movements", "Focus on food items", "Overhead shot of all items", "Show the cooking process", "Close-up of textures"]
+        case "Fashion":
+            return ["Highlight outfits", "Cinematic transitions", "Focus on details", "Fast-paced cut", "Smooth walk sequence"]
+        case "Lifestyle":
+            return ["Steady camera movements", "Natural lighting focus", "Focus on people", "Slow motion highlights", "Cozy transition style"]
+        default:
+            return ["Steady movements", "Fast transitions", "Upbeat mood", "Cinematic feel", "Focus on details"]
+        }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Add editing instructions")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                        
+                        Text("Describe how you want Dropcut to edit your video (optional).")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 8)
+                    
+                    // Input Text Editor Card
+                    VStack(alignment: .leading, spacing: 8) {
+                        ZStack(alignment: .topLeading) {
+                            if instructionsText.isEmpty {
+                                Text("e.g. Focus on steady movements, start the video with an overhead shot...")
+                                    .font(.body)
+                                    .foregroundColor(.secondary.opacity(0.6))
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 16)
+                                    .allowsHitTesting(false)
+                            }
+                            
+                            TextEditor(text: $instructionsText)
+                                .font(.body)
+                                .padding(12)
+                                .scrollContentBackground(.hidden)
+                                .background(Color.clear)
+                                .focused($isInputActive)
+                                .onChange(of: instructionsText) { _, newValue in
+                                    if newValue.count > 500 {
+                                        instructionsText = String(newValue.prefix(500))
+                                    }
+                                }
+                        }
+                        .frame(height: 180)
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                        )
+                        
+                        HStack {
+                            Spacer()
+                            Text("\(instructionsText.count)/500")
+                                .font(.caption2)
+                                .foregroundColor(instructionsText.count >= 500 ? .red : .secondary)
+                        }
+                        .padding(.horizontal, 4)
+                    }
+                    
+                    // Suggestion Chips
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Quick Suggestions")
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.secondary)
+                        
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(suggestions, id: \.self) { suggestion in
+                                    Button(action: {
+                                        if instructionsText.isEmpty {
+                                            instructionsText = suggestion + "."
+                                        } else {
+                                            let trimmed = instructionsText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                            if trimmed.isEmpty {
+                                                instructionsText = suggestion + "."
+                                            } else if trimmed.hasSuffix(".") || trimmed.hasSuffix("!") || trimmed.hasSuffix("?") {
+                                                instructionsText = trimmed + " " + suggestion + "."
+                                            } else {
+                                                instructionsText = trimmed + ", " + suggestion.lowercased() + "."
+                                            }
+                                        }
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "plus")
+                                                .font(.system(size: 10, weight: .bold))
+                                            Text(suggestion)
+                                        }
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 10)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.accentColor.opacity(0.08))
+                                        )
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(Color.accentColor.opacity(0.2), lineWidth: 1.2)
+                                        )
+                                        .foregroundColor(.accentColor)
+                                    }
+                                    .buttonStyle(ScaleButtonStyle())
+                                }
+                            }
+                            .padding(.horizontal, 2)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .onTapGesture {
+                isInputActive = false
+            }
+            
+            // Next Button
+            Button(action: {
+                navigationPath.append(AppScreen.importClips)
+            }) {
+                Text("Next")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [.accentColor, .purple]),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(16)
+                    .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+            }
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .navigationTitle("Instructions")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

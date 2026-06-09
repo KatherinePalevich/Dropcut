@@ -16,14 +16,16 @@ final class Project {
     var videoPath: String?
     var clipPaths: [String]?
     var clipTitles: [String]?
+    var instructions: String?
     
-    init(id: UUID = UUID(), name: String, timestamp: Date = Date(), videoPath: String? = nil, clipPaths: [String]? = [], clipTitles: [String]? = []) {
+    init(id: UUID = UUID(), name: String, timestamp: Date = Date(), videoPath: String? = nil, clipPaths: [String]? = [], clipTitles: [String]? = [], instructions: String? = nil) {
         self.id = id
         self.name = name
         self.timestamp = timestamp
         self.videoPath = videoPath
         self.clipPaths = clipPaths
         self.clipTitles = clipTitles
+        self.instructions = instructions
     }
 }
 

@@ -15,6 +15,7 @@ struct VideoEditorView: View {
     @Binding var navigationPath: NavigationPath
     @Binding var selectedVideos: [VideoClip]
     @Binding var editingProject: Project?
+    @Binding var customInstructions: String
     
     @State private var activePlayer: AVPlayer? = nil
     @State private var selectedClip: VideoClip? = nil
@@ -310,7 +311,8 @@ struct VideoEditorView: View {
                                 name: newName,
                                 videoPath: permanentFileName,
                                 clipPaths: finalClipPaths,
-                                clipTitles: finalClipTitles
+                                clipTitles: finalClipTitles,
+                                instructions: customInstructions.isEmpty ? nil : customInstructions
                             )
                             modelContext.insert(newProject)
                         }
@@ -385,7 +387,8 @@ struct TimelineClipView: View {
             selectedVideos: .constant([
                 VideoClip(url: URL(string: "https://developer.apple.com/videos/mp4/subtitles_sample.mp4")!, title: "Intro")
             ]),
-            editingProject: .constant(nil)
+            editingProject: .constant(nil),
+            customInstructions: .constant("Sample instructions")
         )
     }
 }
