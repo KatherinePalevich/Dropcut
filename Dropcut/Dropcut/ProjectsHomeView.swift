@@ -17,6 +17,7 @@ struct ProjectsHomeView: View {
     
     @Query(sort: \Project.timestamp, order: .reverse) private var projects: [Project]
     @State private var projectToPlay: Project? = nil
+    @State private var showSettings = false
     
     // Grid configuration: 2 columns
     let columns = [
@@ -108,15 +109,29 @@ struct ProjectsHomeView: View {
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 12) {
-                        Text("Dropcut")
-                            .font(.system(size: 34, weight: .black, design: .rounded))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [.accentColor, .purple]),
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                        ZStack {
+                            Text("Dropcut")
+                                .font(.system(size: 34, weight: .black, design: .rounded))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [.accentColor, .purple]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
                                 )
-                            )
+                            
+                            HStack {
+                                Spacer()
+                                Button(action: {
+                                    showSettings = true
+                                }) {
+                                    Image(systemName: "gearshape.fill")
+                                        .font(.title3)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.trailing, 20)
+                            }
+                        }
                         
                         Button(action: startNewProject) {
                             HStack(spacing: 6) {
@@ -155,6 +170,9 @@ struct ProjectsHomeView: View {
         .navigationBarHidden(true) // We use our own header for home screen for a more custom, premium feel
         .fullScreenCover(item: $projectToPlay) { project in
             FullScreenPlayerView(project: project)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
         }
     }
 }

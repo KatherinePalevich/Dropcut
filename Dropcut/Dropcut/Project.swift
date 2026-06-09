@@ -17,8 +17,9 @@ final class Project {
     var clipPaths: [String]?
     var clipTitles: [String]?
     var instructions: String?
+    var geminiPrompt: String?
     
-    init(id: UUID = UUID(), name: String, timestamp: Date = Date(), videoPath: String? = nil, clipPaths: [String]? = [], clipTitles: [String]? = [], instructions: String? = nil) {
+    init(id: UUID = UUID(), name: String, timestamp: Date = Date(), videoPath: String? = nil, clipPaths: [String]? = [], clipTitles: [String]? = [], instructions: String? = nil, geminiPrompt: String? = nil) {
         self.id = id
         self.name = name
         self.timestamp = timestamp
@@ -26,6 +27,7 @@ final class Project {
         self.clipPaths = clipPaths
         self.clipTitles = clipTitles
         self.instructions = instructions
+        self.geminiPrompt = geminiPrompt
     }
 }
 

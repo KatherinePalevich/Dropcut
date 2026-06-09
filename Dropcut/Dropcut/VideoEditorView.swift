@@ -16,6 +16,7 @@ struct VideoEditorView: View {
     @Binding var selectedVideos: [VideoClip]
     @Binding var editingProject: Project?
     @Binding var customInstructions: String
+    @Binding var geminiPrompt: String
     
     @State private var activePlayer: AVPlayer? = nil
     @State private var selectedClip: VideoClip? = nil
@@ -25,6 +26,9 @@ struct VideoEditorView: View {
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
+    
+    @State private var isPromptExpanded = false
+    @State private var isCopied = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -128,6 +132,62 @@ struct VideoEditorView: View {
                 .padding(.vertical)
             }
             .background(Color(.systemGroupedBackground))
+            
+            if !geminiPrompt.isEmpty {
+                DisclosureGroup(
+                    isExpanded: $isPromptExpanded,
+                    content: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Spacer()
+                                Button(action: {
+                                    UIPasteboard.general.string = geminiPrompt
+                                    isCopied = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        isCopied = false
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc")
+                                        Text(isCopied ? "Copied!" : "Copy Prompt")
+                                    }
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(isCopied ? .green : .accentColor)
+                                }
+                                .padding(.top, 4)
+                            }
+                            
+                            ScrollView {
+                                Text(geminiPrompt)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.leading)
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 140)
+                            .background(Color(.tertiarySystemBackground))
+                            .cornerRadius(8)
+                        }
+                    },
+                    label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .foregroundColor(.purple)
+                            Text("Gemini Prompt Debug")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                )
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(12)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+            }
             
             Spacer()
             
@@ -301,6 +361,8 @@ struct VideoEditorView: View {
                             existingProject.clipPaths = finalClipPaths
                             existingProject.clipTitles = finalClipTitles
                             existingProject.timestamp = Date()
+                            existingProject.instructions = customInstructions.isEmpty ? nil : customInstructions
+                            existingProject.geminiPrompt = geminiPrompt.isEmpty ? nil : geminiPrompt
                             
                             editingProject = nil // Reset editing project binding
                         } else {
@@ -312,7 +374,8 @@ struct VideoEditorView: View {
                                 videoPath: permanentFileName,
                                 clipPaths: finalClipPaths,
                                 clipTitles: finalClipTitles,
-                                instructions: customInstructions.isEmpty ? nil : customInstructions
+                                instructions: customInstructions.isEmpty ? nil : customInstructions,
+                                geminiPrompt: geminiPrompt.isEmpty ? nil : geminiPrompt
                             )
                             modelContext.insert(newProject)
                         }
@@ -388,7 +451,8 @@ struct TimelineClipView: View {
                 VideoClip(url: URL(string: "https://developer.apple.com/videos/mp4/subtitles_sample.mp4")!, title: "Intro")
             ]),
             editingProject: .constant(nil),
-            customInstructions: .constant("Sample instructions")
+            customInstructions: .constant("Sample instructions"),
+            geminiPrompt: .constant("Mock Gemini Prompt Details\nLines of debug info...")
         )
     }
 }
