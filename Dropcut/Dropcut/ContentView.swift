@@ -609,19 +609,35 @@ struct ImportClipsView: View {
                 if newItems.isEmpty { return }
                 isLoading = true
                 Task {
-                    for item in newItems {
-                        do {
-                            if let transferable = try await item.loadTransferable(type: VideoTransferable.self) {
-                                await MainActor.run {
-                                    let clipNum = selectedVideos.count + 1
-                                    selectedVideos.append(VideoClip(url: transferable.url, title: "Clip \(clipNum)"))
+                    let importedClips = await withTaskGroup(of: (Int, VideoTransferable?).self) { group in
+                        for (index, item) in newItems.enumerated() {
+                            group.addTask {
+                                do {
+                                    let transferable = try await item.loadTransferable(type: VideoTransferable.self)
+                                    return (index, transferable)
+                                } catch {
+                                    print("Failed to load video: \(error)")
+                                    return (index, nil)
                                 }
                             }
-                        } catch {
-                            print("Failed to load video: \(error)")
                         }
+                        
+                        var results = [Int: VideoTransferable]()
+                        for await (index, transferable) in group {
+                            if let transferable = transferable {
+                                results[index] = transferable
+                            }
+                        }
+                        
+                        // Sort by original index to preserve selection order
+                        return newItems.indices.compactMap { results[$0] }
                     }
+                    
                     await MainActor.run {
+                        for transferable in importedClips {
+                            let clipNum = selectedVideos.count + 1
+                            selectedVideos.append(VideoClip(url: transferable.url, title: "Clip \(clipNum)"))
+                        }
                         isLoading = false
                         pickerItems = []
                     }
@@ -687,19 +703,32 @@ struct ImportClipsView: View {
                     originalClipsWithDurations.append((clip: clip, duration: duration.seconds))
                 }
                 
-                // B. Upload files one by one to Gemini File API
-                var uploadedFileURIs: [String] = []
-                for (index, item) in originalClipsWithDurations.enumerated() {
-                    await MainActor.run {
-                        processingStep = "Uploading clip \(index + 1) of \(selectedVideos.count) to Gemini..."
+                // B. Upload files concurrently to Gemini File API
+                let totalCount = originalClipsWithDurations.count
+                await MainActor.run {
+                    processingStep = "Uploading and processing clips (0/\(totalCount))..."
+                }
+                
+                let uploadedFileURIs: [String] = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+                    for (index, item) in originalClipsWithDurations.enumerated() {
+                        group.addTask {
+                            let uploadRes = try await GeminiService.uploadFile(fileURL: item.clip.url, apiKey: resolvedApiKey)
+                            let activeURI = try await GeminiService.pollFileStatus(fileName: uploadRes.name, apiKey: resolvedApiKey)
+                            return (index, activeURI)
+                        }
                     }
-                    let uploadRes = try await GeminiService.uploadFile(fileURL: item.clip.url, apiKey: resolvedApiKey)
                     
-                    await MainActor.run {
-                        processingStep = "Processing clip \(index + 1) of \(selectedVideos.count) on Gemini..."
+                    var results = [Int: String]()
+                    for try await (index, uri) in group {
+                        results[index] = uri
+                        let completedCount = results.count
+                        await MainActor.run {
+                            processingStep = "Uploading and processing clips (\(completedCount)/\(totalCount))..."
+                        }
                     }
-                    let activeURI = try await GeminiService.pollFileStatus(fileName: uploadRes.name, apiKey: resolvedApiKey)
-                    uploadedFileURIs.append(activeURI)
+                    
+                    // Sort to maintain original selection order
+                    return originalClipsWithDurations.indices.map { results[$0]! }
                 }
                 
                 // C. Construct the prompt
