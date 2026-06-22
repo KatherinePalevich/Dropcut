@@ -79,15 +79,15 @@ struct ContentView: View {
                 case .instructions:
                     InstructionsView(
                         navigationPath: $navigationPath,
-                        selectedContent: selectedContent ?? "",
+                        selectedContent: $selectedContent,
                         instructionsText: $customInstructions
                     )
                 case .importClips:
                     ImportClipsView(
                         navigationPath: $navigationPath,
                         selectedVideos: $selectedVideos,
-                        selectedContent: selectedContent,
-                        durationSeconds: durationSeconds,
+                        selectedContent: $selectedContent,
+                        durationSeconds: $durationSeconds,
                         customInstructions: $customInstructions,
                         geminiPrompt: $geminiPrompt
                     )
@@ -321,7 +321,7 @@ struct PreferencesView: View {
 // MARK: - Instructions View (Screen 2.5)
 struct InstructionsView: View {
     @Binding var navigationPath: NavigationPath
-    let selectedContent: String
+    @Binding var selectedContent: String?
     @Binding var instructionsText: String
     @FocusState private var isInputActive: Bool
     
@@ -481,13 +481,12 @@ struct InstructionsView: View {
 }
 
 // MARK: - Import Clips View (Screen 3)
-// MARK: - Import Clips View (Screen 3)
 struct ImportClipsView: View {
     @Binding var navigationPath: NavigationPath
     @Binding var selectedVideos: [VideoClip]
     
-    let selectedContent: String?
-    let durationSeconds: Int
+    @Binding var selectedContent: String?
+    @Binding var durationSeconds: Int
     @Binding var customInstructions: String
     @Binding var geminiPrompt: String
     
