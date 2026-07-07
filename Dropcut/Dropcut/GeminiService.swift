@@ -43,12 +43,22 @@ struct GeminiService {
         request.setValue("multipart/related; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("multipart", forHTTPHeaderField: "X-Goog-Upload-Protocol")
         
-        // Build multipart/related body
-        var body = Data()
+        // Build multipart/related body on disk in a temporary file to avoid loading file bytes into RAM
+        let tempMultipartURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gemini_upload_\(UUID().uuidString)")
+            .appendingPathExtension("tmp")
+        
+        FileManager.default.createFile(atPath: tempMultipartURL.path, contents: nil, attributes: nil)
+        
+        let fileHandle = try FileHandle(forWritingTo: tempMultipartURL)
+        defer {
+            try? fileHandle.close()
+            try? FileManager.default.removeItem(at: tempMultipartURL)
+        }
         
         // Part 1: Metadata
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Type: application/json; charset=UTF-8\r\n\r\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: "--\(boundary)\r\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: "Content-Type: application/json; charset=UTF-8\r\n\r\n".data(using: .utf8)!)
         
         let fileMetadata: [String: Any] = [
             "file": [
@@ -58,23 +68,33 @@ struct GeminiService {
         ]
         
         let metadataData = try JSONSerialization.data(withJSONObject: fileMetadata)
-        body.append(metadataData)
-        body.append("\r\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: metadataData)
+        try fileHandle.write(contentsOf: "\r\n".data(using: .utf8)!)
         
         // Part 2: Binary File Data
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: "--\(boundary)\r\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: "Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
         
-        let fileData = try Data(contentsOf: fileURL)
-        body.append(fileData)
-        body.append("\r\n".data(using: .utf8)!)
+        let sourceHandle = try FileHandle(forReadingFrom: fileURL)
+        defer {
+            try? sourceHandle.close()
+        }
+        
+        let bufferSize = 1024 * 1024 // 1MB buffer
+        while let chunk = try sourceHandle.read(upToCount: bufferSize), !chunk.isEmpty {
+            try fileHandle.write(contentsOf: chunk)
+        }
+        
+        try fileHandle.write(contentsOf: "\r\n".data(using: .utf8)!)
         
         // End Boundary
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: "--\(boundary)--\r\n".data(using: .utf8)!)
         
-        request.httpBody = body
+        // Close the handle before uploading so all contents are written
+        try fileHandle.close()
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Stream the upload from the temp file
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: tempMultipartURL)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GeminiError.invalidResponse
@@ -109,8 +129,10 @@ struct GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         
-        // Poll every 1.5 seconds up to 40 times (60 seconds max)
-        for _ in 0..<40 {
+        var sleepInterval: UInt64 = 500_000_000 // Start with 0.5 seconds
+        
+        // Poll up to 120 times (3 minutes maximum with backoff)
+        for _ in 0..<120 {
             let (data, response) = try await URLSession.shared.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
@@ -136,15 +158,18 @@ struct GeminiService {
                 }
             }
             
-            // Wait 1.5 seconds before polling again
-            try await Task.sleep(nanoseconds: 1_500_000_000)
+            try await Task.sleep(nanoseconds: sleepInterval)
+            // Linear backoff up to 1.5 seconds
+            if sleepInterval < 1_500_000_000 {
+                sleepInterval += 500_000_000
+            }
         }
         
         throw GeminiError.apiError("Timeout waiting for file to process.")
     }
     
     // Sends the prompt text along with the file URIs to Gemini content generation API
-    static func generateContent(apiKey: String, fileURIs: [String], promptText: String) async throws -> String {
+    static func generateContent(apiKey: String, fileURIs: [String], promptText: String, systemInstruction: String? = nil) async throws -> String {
         let generateURLString = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=\(apiKey)"
         guard let url = URL(string: generateURLString) else {
             throw GeminiError.invalidURL
@@ -172,16 +197,44 @@ struct GeminiService {
             "text": promptText
         ])
         
-        let requestBody: [String: Any] = [
+        var requestBody: [String: Any] = [
             "contents": [
                 [
                     "parts": parts
                 ]
             ],
             "generationConfig": [
-                "responseMimeType": "application/json"
+                "responseMimeType": "application/json",
+                "temperature": 0.1,
+                "responseSchema": [
+                    "type": "OBJECT",
+                    "properties": [
+                        "clips": [
+                            "type": "ARRAY",
+                            "items": [
+                                "type": "OBJECT",
+                                "properties": [
+                                    "video_index": ["type": "INTEGER"],
+                                    "start_time": ["type": "NUMBER"],
+                                    "end_time": ["type": "NUMBER"],
+                                    "placement_order": ["type": "INTEGER"]
+                                ],
+                                "required": ["video_index", "start_time", "end_time", "placement_order"]
+                            ]
+                        ]
+                    ],
+                    "required": ["clips"]
+                ]
             ]
         ]
+        
+        if let systemInstruction = systemInstruction {
+            requestBody["systemInstruction"] = [
+                "parts": [
+                    ["text": systemInstruction]
+                ]
+            ]
+        }
         
         let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
         request.httpBody = bodyData

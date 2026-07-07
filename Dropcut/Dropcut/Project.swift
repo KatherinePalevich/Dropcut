@@ -16,16 +16,20 @@ final class Project {
     var videoPath: String?
     var clipPaths: [String]?
     var clipTitles: [String]?
+    var clipStartTimes: [Double]?
+    var clipEndTimes: [Double]?
     var instructions: String?
     var geminiPrompt: String?
     
-    init(id: UUID = UUID(), name: String, timestamp: Date = Date(), videoPath: String? = nil, clipPaths: [String]? = [], clipTitles: [String]? = [], instructions: String? = nil, geminiPrompt: String? = nil) {
+    init(id: UUID = UUID(), name: String, timestamp: Date = Date(), videoPath: String? = nil, clipPaths: [String]? = [], clipTitles: [String]? = [], clipStartTimes: [Double]? = [], clipEndTimes: [Double]? = [], instructions: String? = nil, geminiPrompt: String? = nil) {
         self.id = id
         self.name = name
         self.timestamp = timestamp
         self.videoPath = videoPath
         self.clipPaths = clipPaths
         self.clipTitles = clipTitles
+        self.clipStartTimes = clipStartTimes
+        self.clipEndTimes = clipEndTimes
         self.instructions = instructions
         self.geminiPrompt = geminiPrompt
     }
@@ -38,6 +42,14 @@ extension Project {
     
     var safeClipTitles: [String] {
         clipTitles ?? []
+    }
+    
+    var safeClipStartTimes: [Double] {
+        clipStartTimes ?? []
+    }
+    
+    var safeClipEndTimes: [Double] {
+        clipEndTimes ?? []
     }
     
     // Dynamically resolves the absolute URL of the video file inside the Documents directory.

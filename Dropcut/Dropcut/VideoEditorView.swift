@@ -57,20 +57,7 @@ struct VideoEditorView: View {
             .padding()
             .onAppear {
                 if let first = selectedVideos.first {
-                    selectedClip = first
-                    let player = AVPlayer(url: first.url)
-                    
-                    // Loop player play
-                    NotificationCenter.default.addObserver(
-                        forName: .AVPlayerItemDidPlayToEndTime,
-                        object: player.currentItem,
-                        queue: .main
-                    ) { _ in
-                        player.seek(to: .zero)
-                        player.play()
-                    }
-                    activePlayer = player
-                    player.play()
+                    playClip(first)
                 }
             }
             .onDisappear {
@@ -102,19 +89,7 @@ struct VideoEditorView: View {
                                     video: video,
                                     isSelected: selectedClip == video
                                 ) {
-                                    activePlayer?.pause()
-                                    selectedClip = video
-                                    let player = AVPlayer(url: video.url)
-                                    NotificationCenter.default.addObserver(
-                                        forName: .AVPlayerItemDidPlayToEndTime,
-                                        object: player.currentItem,
-                                        queue: .main
-                                    ) { _ in
-                                        player.seek(to: .zero)
-                                        player.play()
-                                    }
-                                    activePlayer = player
-                                    player.play()
+                                    playClip(video)
                                 }
                                 .onDrag {
                                     self.draggingClip = video
@@ -238,6 +213,75 @@ struct VideoEditorView: View {
         }
     }
     
+    private func createPlayer(for clip: VideoClip) async -> AVPlayer {
+        let asset = AVAsset(url: clip.url)
+        
+        let start = clip.startTime ?? 0.0
+        let end: Double
+        if let e = clip.endTime {
+            end = e
+        } else {
+            let duration = (try? await asset.load(.duration)) ?? .zero
+            end = duration.seconds
+        }
+        
+        let composition = AVMutableComposition()
+        if let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            do {
+                let videoTracks = try await asset.loadTracks(withMediaType: .video)
+                if let firstVideo = videoTracks.first {
+                    let transform = try? await firstVideo.load(.preferredTransform)
+                    videoTrack.preferredTransform = transform ?? .identity
+                    let startCM = CMTime(seconds: start, preferredTimescale: 600)
+                    let durationCM = CMTime(seconds: max(0.1, end - start), preferredTimescale: 600)
+                    try videoTrack.insertTimeRange(CMTimeRange(start: startCM, duration: durationCM), of: firstVideo, at: .zero)
+                }
+                
+                // Add optional audio track if present
+                let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+                if let firstAudio = audioTracks.first,
+                   let audioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                    let startCM = CMTime(seconds: start, preferredTimescale: 600)
+                    let durationCM = CMTime(seconds: max(0.1, end - start), preferredTimescale: 600)
+                    try audioTrack.insertTimeRange(CMTimeRange(start: startCM, duration: durationCM), of: firstAudio, at: .zero)
+                }
+                
+                let playerItem = AVPlayerItem(asset: composition)
+                return AVPlayer(playerItem: playerItem)
+            } catch {
+                print("Failed to build preview composition: \(error)")
+            }
+        }
+        
+        // Fallback
+        return AVPlayer(url: clip.url)
+    }
+    
+    private func playClip(_ clip: VideoClip) {
+        activePlayer?.pause()
+        activePlayer = nil
+        selectedClip = clip
+        
+        Task {
+            let player = await createPlayer(for: clip)
+            guard selectedClip?.id == clip.id else { return } // Avoid race if user tapped another clip quickly
+            
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                player.seek(to: .zero)
+                player.play()
+            }
+            
+            await MainActor.run {
+                self.activePlayer = player
+                player.play()
+            }
+        }
+    }
+    
     // Combine selected video clips and save to device Photos Library
     private func exportAndUploadVideo() {
         guard !selectedVideos.isEmpty else { return }
@@ -280,14 +324,18 @@ struct VideoEditorView: View {
                         isFirst = false
                     }
                     
-                    let timeRange = CMTimeRange(start: .zero, duration: duration)
+                    let startCM = CMTime(seconds: clip.startTime ?? 0.0, preferredTimescale: 600)
+                    let endCM = CMTime(seconds: clip.endTime ?? duration.seconds, preferredTimescale: 600)
+                    let clipDurationCM = CMTimeSubtract(endCM, startCM)
+                    let timeRange = CMTimeRange(start: startCM, duration: clipDurationCM)
+                    
                     try compositionVideoTrack.insertTimeRange(timeRange, of: assetVideoTrack, at: currentTime)
                     
                     if let assetAudioTrack = audioTracks.first {
                         try compositionAudioTrack.insertTimeRange(timeRange, of: assetAudioTrack, at: currentTime)
                     }
                     
-                    currentTime = CMTimeAdd(currentTime, duration)
+                    currentTime = CMTimeAdd(currentTime, clipDurationCM)
                 }
                 
                 guard currentTime.seconds > 0 else {
@@ -328,11 +376,34 @@ struct VideoEditorView: View {
                     // Copy individual clips to permanent directory
                     var finalClipPaths: [String] = []
                     var finalClipTitles: [String] = []
+                    var finalClipStartTimes: [Double] = []
+                    var finalClipEndTimes: [Double] = []
+                    
+                    var urlToPermanentPath = [URL: String]()
                     
                     for clip in selectedVideos {
-                        let relativePath = try Project.saveClipToPermanentDirectory(from: clip.url)
+                        let relativePath: String
+                        if let cachedPath = urlToPermanentPath[clip.url] {
+                            relativePath = cachedPath
+                        } else {
+                            relativePath = try Project.saveClipToPermanentDirectory(from: clip.url)
+                            urlToPermanentPath[clip.url] = relativePath
+                        }
+                        
                         finalClipPaths.append(relativePath)
                         finalClipTitles.append(clip.title)
+                        
+                        let start = clip.startTime ?? 0.0
+                        let end: Double
+                        if let e = clip.endTime {
+                            end = e
+                        } else {
+                            let asset = AVAsset(url: clip.url)
+                            let dur = try? await asset.load(.duration)
+                            end = dur?.seconds ?? 0.0
+                        }
+                        finalClipStartTimes.append(start)
+                        finalClipEndTimes.append(end)
                     }
                     
                     await MainActor.run {
@@ -360,6 +431,8 @@ struct VideoEditorView: View {
                             existingProject.videoPath = permanentFileName
                             existingProject.clipPaths = finalClipPaths
                             existingProject.clipTitles = finalClipTitles
+                            existingProject.clipStartTimes = finalClipStartTimes
+                            existingProject.clipEndTimes = finalClipEndTimes
                             existingProject.timestamp = Date()
                             existingProject.instructions = customInstructions.isEmpty ? nil : customInstructions
                             existingProject.geminiPrompt = geminiPrompt.isEmpty ? nil : geminiPrompt
@@ -374,6 +447,8 @@ struct VideoEditorView: View {
                                 videoPath: permanentFileName,
                                 clipPaths: finalClipPaths,
                                 clipTitles: finalClipTitles,
+                                clipStartTimes: finalClipStartTimes,
+                                clipEndTimes: finalClipEndTimes,
                                 instructions: customInstructions.isEmpty ? nil : customInstructions,
                                 geminiPrompt: geminiPrompt.isEmpty ? nil : geminiPrompt
                             )

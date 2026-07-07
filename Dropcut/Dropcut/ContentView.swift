@@ -57,7 +57,9 @@ struct ContentView: View {
                                     let title = project.safeClipTitles[index]
                                     let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                                     let url = documentsURL.appendingPathComponent(relativePath)
-                                    return VideoClip(url: url, title: title)
+                                    let start = project.safeClipStartTimes.indices.contains(index) ? project.safeClipStartTimes[index] : nil
+                                    let end = project.safeClipEndTimes.indices.contains(index) ? project.safeClipEndTimes[index] : nil
+                                    return VideoClip(url: url, title: title, startTime: start, endTime: end)
                                 }
                             }
                             navigationPath.append(AppScreen.videoEditor)
@@ -499,6 +501,7 @@ struct ImportClipsView: View {
     @State private var showNoKeyAlert = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    @State private var uploadTask: Task<Void, Never>? = nil
     
     var body: some View {
         ZStack {
@@ -639,6 +642,7 @@ struct ImportClipsView: View {
                         }
                         isLoading = false
                         pickerItems = []
+                        startBackgroundUploads()
                     }
                 }
             }
@@ -676,13 +680,75 @@ struct ImportClipsView: View {
                 .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
             }
         }
+        .onAppear {
+            startBackgroundUploads()
+        }
+    }
+    
+    private func resolvedApiKey() -> String {
+        var apiKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"] ?? ""
+        if apiKey.isEmpty {
+            apiKey = UserDefaults.standard.string(forKey: "GeminiAPIKey") ?? ""
+        }
+        return apiKey
+    }
+    
+    private func startBackgroundUploads() {
+        let key = resolvedApiKey()
+        guard !key.isEmpty else { return }
+        
+        uploadTask?.cancel()
+        
+        uploadTask = Task {
+            while !Task.isCancelled {
+                // Find first video that is not uploaded, not currently uploading, and has no error
+                guard let index = selectedVideos.firstIndex(where: {
+                    $0.geminiFileURI == nil && !$0.isUploading && $0.uploadError == nil
+                }) else {
+                    break
+                }
+                
+                await MainActor.run {
+                    selectedVideos[index].isUploading = true
+                    selectedVideos[index].uploadError = nil
+                }
+                
+                let clip = selectedVideos[index]
+                
+                do {
+                    let compressedURL = try await Self.compressVideoForUpload(url: clip.url)
+                    defer {
+                        try? FileManager.default.removeItem(at: compressedURL)
+                    }
+                    
+                    let uploadRes = try await GeminiService.uploadFile(fileURL: compressedURL, apiKey: key)
+                    let activeURI = try await GeminiService.pollFileStatus(fileName: uploadRes.name, apiKey: key)
+                    
+                    if Task.isCancelled { break }
+                    
+                    await MainActor.run {
+                        if let idx = selectedVideos.firstIndex(where: { $0.id == clip.id }) {
+                            selectedVideos[idx].geminiFileURI = activeURI
+                            selectedVideos[idx].isUploading = false
+                        }
+                    }
+                } catch {
+                    if Task.isCancelled { break }
+                    print("Background upload failed for clip \(clip.title): \(error.localizedDescription)")
+                    
+                    await MainActor.run {
+                        if let idx = selectedVideos.firstIndex(where: { $0.id == clip.id }) {
+                            selectedVideos[idx].isUploading = false
+                            selectedVideos[idx].uploadError = error.localizedDescription
+                        }
+                    }
+                }
+            }
+        }
     }
     
     private func runDropcutPipeline() {
-        var resolvedApiKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"] ?? ""
-        if resolvedApiKey.isEmpty {
-            resolvedApiKey = UserDefaults.standard.string(forKey: "GeminiAPIKey") ?? ""
-        }
+        let resolvedApiKey = resolvedApiKey()
         
         guard !resolvedApiKey.isEmpty else {
             showNoKeyAlert = true
@@ -692,45 +758,71 @@ struct ImportClipsView: View {
         isProcessing = true
         processingStep = "Preparing clips..."
         
+        // Cancel background upload task to prevent race conditions and CPU/GPU contention
+        uploadTask?.cancel()
+        uploadTask = nil
+        
+        // Reset uploading states
+        for index in selectedVideos.indices {
+            selectedVideos[index].isUploading = false
+        }
+        
         Task {
             do {
-                // A. Query duration of each clip to construct a clear prompt
-                var originalClipsWithDurations: [(clip: VideoClip, duration: Double)] = []
-                for clip in selectedVideos {
-                    let asset = AVURLAsset(url: clip.url)
-                    let duration = try await asset.load(.duration)
-                    originalClipsWithDurations.append((clip: clip, duration: duration.seconds))
+                // A. Query duration of each clip concurrently to construct a clear prompt
+                let originalClipsWithDurations: [(clip: VideoClip, duration: Double)] = try await withThrowingTaskGroup(of: (Int, VideoClip, Double).self) { group in
+                    for (index, clip) in selectedVideos.enumerated() {
+                        group.addTask {
+                            let asset = AVURLAsset(url: clip.url)
+                            let duration = try await asset.load(.duration)
+                            return (index, clip, duration.seconds)
+                        }
+                    }
+                    var results = [(Int, VideoClip, Double)]()
+                    for try await result in group {
+                        results.append(result)
+                    }
+                    return results.sorted(by: { $0.0 < $1.0 }).map { ($0.1, $0.2) }
                 }
                 
-                // B. Upload files concurrently to Gemini File API
+                // B. Upload files sequentially to Gemini File API (using cache)
                 let totalCount = originalClipsWithDurations.count
                 await MainActor.run {
                     processingStep = "Uploading and processing clips (0/\(totalCount))..."
                 }
                 
-                let uploadedFileURIs: [String] = try await withThrowingTaskGroup(of: (Int, String).self) { group in
-                    for (index, item) in originalClipsWithDurations.enumerated() {
-                        group.addTask {
-                            let uploadRes = try await GeminiService.uploadFile(fileURL: item.clip.url, apiKey: resolvedApiKey)
-                            let activeURI = try await GeminiService.pollFileStatus(fileName: uploadRes.name, apiKey: resolvedApiKey)
-                            return (index, activeURI)
-                        }
-                    }
+                var uploadedFileURIs = [String]()
+                for (index, item) in originalClipsWithDurations.enumerated() {
+                    try Task.checkCancellation()
                     
-                    var results = [Int: String]()
-                    for try await (index, uri) in group {
-                        results[index] = uri
-                        let completedCount = results.count
+                    let activeURI: String
+                    if let cachedURI = item.clip.geminiFileURI {
+                        activeURI = cachedURI
+                    } else {
+                        let compressedURL = try await Self.compressVideoForUpload(url: item.clip.url)
+                        defer {
+                            try? FileManager.default.removeItem(at: compressedURL)
+                        }
+                        
+                        let uploadRes = try await GeminiService.uploadFile(fileURL: compressedURL, apiKey: resolvedApiKey)
+                        activeURI = try await GeminiService.pollFileStatus(fileName: uploadRes.name, apiKey: resolvedApiKey)
+                        
+                        // Update cache
                         await MainActor.run {
-                            processingStep = "Uploading and processing clips (\(completedCount)/\(totalCount))..."
+                            if let idx = selectedVideos.firstIndex(where: { $0.id == item.clip.id }) {
+                                selectedVideos[idx].geminiFileURI = activeURI
+                            }
                         }
                     }
                     
-                    // Sort to maintain original selection order
-                    return originalClipsWithDurations.indices.map { results[$0]! }
+                    uploadedFileURIs.append(activeURI)
+                    let completedCount = index + 1
+                    await MainActor.run {
+                        processingStep = "Uploading and processing clips (\(completedCount)/\(totalCount))..."
+                    }
                 }
                 
-                // C. Construct the prompt
+                // C. Construct the prompt and system instructions
                 await MainActor.run {
                     processingStep = "Analyzing clips with Gemini..."
                 }
@@ -738,25 +830,15 @@ struct ImportClipsView: View {
                 let contentEditingType = selectedContent ?? "General"
                 let videoLength = "\(durationSeconds)"
                 
-                var promptText = "You are a content creator who creates short-form videos to highlight [insert selected content editing type]. You have taken these videos. Choose the best moments among these videos to create a final video that is [insert selected video length] seconds long and ready to be posted as a Reel or TikTok. "
+                let systemInstruction = "You are a content creator who creates short-form videos to highlight \(contentEditingType). Choose the best moments among the provided videos to create a final video edit plan."
+                
+                var promptText = "Create a final video edit plan that is \(videoLength) seconds long and ready to be posted as a Reel or TikTok. "
                 
                 if !customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    promptText += "Here is some more specific information about the editing style I want to have the final video in: [insert editing instructions]. "
+                    promptText += "Here is some more specific information about the editing style I want to have the final video in: \(customInstructions). "
                 }
                 
-                promptText += "In JSON format, return to me the specific timestamps of each original video that I should use as well as the order of the clips to combine into a final video.\n\n"
-                
-                // Perform replacements
-                promptText = promptText.replacingOccurrences(of: "[insert selected content editing type]", with: contentEditingType)
-                promptText = promptText.replacingOccurrences(of: "[insert selected video length]", with: videoLength)
-                if !customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    promptText = promptText.replacingOccurrences(of: "[insert editing instructions]", with: customInstructions)
-                }
-                
-                promptText += "Your response must be a JSON object containing an array of video cuts. The JSON must follow this exact schema:\n"
-                promptText += "{\n  \"clips\": [\n    {\n      \"video_index\": <int, 0-indexed position of the original video clip in the list provided below>,\n      \"start_time\": <float, start time in seconds within the original video clip>,\n      \"end_time\": <float, end time in seconds within the original video clip>,\n      \"placement_order\": <int, 1-indexed order/placement position in which this cut segment should appear in the final video timeline>\n    }\n  ]\n}\n\n"
-                
-                promptText += "Here are the video clips you have access to, in order:\n"
+                promptText += "\nHere are the video clips you have access to, in order:\n"
                 for (index, item) in originalClipsWithDurations.enumerated() {
                     promptText += "- Clip \(index): title: \"\(item.clip.title)\", duration: \(String(format: "%.2f", item.duration)) seconds\n"
                 }
@@ -769,10 +851,9 @@ struct ImportClipsView: View {
                 promptText += "1. Every start_time must be >= 0 and end_time <= the original video duration. Keep each cut's duration (end_time - start_time) at least 1.0 second.\n"
                 promptText += "2. The total sum of the cut durations must equal \(formattedTargetLength) seconds as closely as possible. The total length of the video must be the smaller of either the specified video length (\(durationSeconds) seconds) or the total length of uploaded video content (\(String(format: "%.2f", totalUploadedDuration)) seconds).\n"
                 promptText += "3. Don't repeat clips in the final video. Each original clip (identified by video_index) must be used at most once.\n"
-                promptText += "4. Return only valid, raw JSON. Do not wrap the JSON output in markdown backticks (e.g. do not use ```json)."
                 
-                // D. Call Gemini GenerateContent REST API
-                let jsonResponseText = try await GeminiService.generateContent(apiKey: resolvedApiKey, fileURIs: uploadedFileURIs, promptText: promptText)
+                // D. Call Gemini GenerateContent REST API with system instructions
+                let jsonResponseText = try await GeminiService.generateContent(apiKey: resolvedApiKey, fileURIs: uploadedFileURIs, promptText: promptText, systemInstruction: systemInstruction)
                 
                 // E. Parse JSON Response
                 guard let jsonData = jsonResponseText.data(using: .utf8) else {
@@ -782,9 +863,9 @@ struct ImportClipsView: View {
                 let parsedPlan = try JSONDecoder().decode(GeminiVideoPlan.self, from: jsonData)
                 let sortedClips = parsedPlan.clips.sorted(by: { ($0.placement_order ?? 0) < ($1.placement_order ?? 0) })
                 
-                // F. Trimming clips based on timestamps and order
+                // F. Organizing clips based on timestamps and order (no physical trimming)
                 await MainActor.run {
-                    processingStep = "Trimming and organizing clips..."
+                    processingStep = "Organizing clips..."
                 }
                 
                 var cutClips: [VideoClip] = []
@@ -794,15 +875,12 @@ struct ImportClipsView: View {
                     }
                     let originalClip = selectedVideos[cut.video_index]
                     
-                    let cutURL = try await trimVideo(
+                    let newClip = VideoClip(
                         url: originalClip.url,
+                        title: "\(originalClip.title) (Cut \(index + 1))",
+                        geminiFileURI: originalClip.geminiFileURI,
                         startTime: cut.start_time,
                         endTime: cut.end_time
-                    )
-                    
-                    let newClip = VideoClip(
-                        url: cutURL,
-                        title: "\(originalClip.title) (Cut \(index + 1))"
                     )
                     cutClips.append(newClip)
                 }
@@ -826,6 +904,57 @@ struct ImportClipsView: View {
                     self.showErrorAlert = true
                 }
             }
+        }
+    }
+    
+    static func compressVideoForUpload(url: URL) async throws -> URL {
+        let fileManager = FileManager.default
+        if let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+           let fileSize = attributes[.size] as? UInt64,
+           fileSize < 15 * 1024 * 1024 {
+            // Already small, copy directly to a temporary file
+            let tempURL = fileManager.temporaryDirectory
+                .appendingPathComponent("upload_direct_\(UUID().uuidString)")
+                .appendingPathExtension("mp4")
+            try fileManager.copyItem(at: url, to: tempURL)
+            return tempURL
+        }
+        
+        let asset = AVURLAsset(url: url)
+        let tempURL = fileManager.temporaryDirectory
+            .appendingPathComponent("upload_\(UUID().uuidString)")
+            .appendingPathExtension("mp4")
+        
+        let preset = AVAssetExportPreset640x480
+        
+        guard let exportSession = AVAssetExportSession(
+            asset: asset,
+            presetName: preset
+        ) else {
+            throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not create AVAssetExportSession for compression."])
+        }
+        
+        exportSession.outputURL = tempURL
+        exportSession.outputFileType = .mp4
+        exportSession.shouldOptimizeForNetworkUse = true
+        
+        await exportSession.export()
+        
+        if exportSession.status == .completed {
+            return tempURL
+        } else {
+            // Fallback to low quality if 640x480 fails
+            if let fallbackSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetLowQuality) {
+                fallbackSession.outputURL = tempURL
+                fallbackSession.outputFileType = .mp4
+                fallbackSession.shouldOptimizeForNetworkUse = true
+                await fallbackSession.export()
+                if fallbackSession.status == .completed {
+                    return tempURL
+                }
+            }
+            let errorDesc = exportSession.error?.localizedDescription ?? "Compression failed with an unknown error."
+            throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: errorDesc])
         }
     }
     
@@ -880,9 +1009,25 @@ struct GeminiVideoPlan: Codable {
 
 // MARK: - UI Helper Components
 struct VideoClip: Identifiable, Hashable {
-    let id = UUID()
+    let id: UUID
     let url: URL
     let title: String
+    var geminiFileURI: String?
+    var isUploading: Bool
+    var uploadError: String?
+    var startTime: Double?
+    var endTime: Double?
+    
+    init(id: UUID = UUID(), url: URL, title: String, geminiFileURI: String? = nil, isUploading: Bool = false, uploadError: String? = nil, startTime: Double? = nil, endTime: Double? = nil) {
+        self.id = id
+        self.url = url
+        self.title = title
+        self.geminiFileURI = geminiFileURI
+        self.isUploading = isUploading
+        self.uploadError = uploadError
+        self.startTime = startTime
+        self.endTime = endTime
+    }
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
@@ -905,6 +1050,39 @@ struct VideoPlayerThumbnail: View {
             } else {
                 Color.black
                 ProgressView()
+            }
+            
+            // Upload Status Overlay in top right corner
+            VStack {
+                HStack {
+                    Spacer()
+                    if video.isUploading {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.7)
+                            .padding(4)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Circle())
+                            .padding(6)
+                    } else if video.geminiFileURI != nil {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(4)
+                            .background(LinearGradient(gradient: Gradient(colors: [.purple, .accentColor]), startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .clipShape(Circle())
+                            .padding(6)
+                    } else if video.uploadError != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(4)
+                            .background(Color.red)
+                            .clipShape(Circle())
+                            .padding(6)
+                    }
+                }
+                Spacer()
             }
             
             VStack {
