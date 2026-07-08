@@ -559,7 +559,7 @@ struct PreferencesView: View {
                             Spacer()
                             
                             Picker("Duration", selection: $durationSeconds) {
-                                ForEach(5...120, id: \.self) { seconds in
+                                ForEach(5...60, id: \.self) { seconds in
                                     Text("\(seconds)").tag(seconds)
                                 }
                             }
@@ -604,7 +604,7 @@ struct PreferencesView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
-        .navigationTitle("Preferences")
+        .navigationTitle("Editing Style")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -635,7 +635,7 @@ struct InstructionsView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Add editing instructions")
+                        Text("3. Add editing instructions")
                             .font(.title2)
                             .fontWeight(.bold)
                             .foregroundColor(.primary)
@@ -766,7 +766,7 @@ struct InstructionsView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
-        .navigationTitle("Instructions")
+        .navigationTitle("Editing Style")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -799,7 +799,7 @@ struct ImportClipsView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("3. Import your video clips")
+                            Text("4. Import your video clips")
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
