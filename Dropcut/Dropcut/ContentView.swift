@@ -76,8 +76,7 @@ struct ContentView: View {
                     PreferencesView(
                         navigationPath: $navigationPath,
                         selectedContent: $selectedContent,
-                        durationSeconds: $durationSeconds,
-                        isFirstProject: projects.isEmpty
+                        durationSeconds: $durationSeconds
                     )
                 case .instructions:
                     InstructionsView(
@@ -514,7 +513,6 @@ struct PreferencesView: View {
     @Binding var navigationPath: NavigationPath
     @Binding var selectedContent: String?
     @Binding var durationSeconds: Int
-    let isFirstProject: Bool
     
     let categories = [
         ("Food", "fork.knife"),
@@ -586,11 +584,7 @@ struct PreferencesView: View {
             
             // Next Button
             Button(action: {
-                if isFirstProject {
-                    navigationPath.append(AppScreen.importClips)
-                } else {
-                    navigationPath.append(AppScreen.instructions)
-                }
+                navigationPath.append(AppScreen.instructions)
             }) {
                 Text("Next")
                     .font(.headline)
