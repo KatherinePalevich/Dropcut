@@ -213,8 +213,9 @@ struct VideoEditorView: View {
         }
     }
     
-    private func createPlayer(for clip: VideoClip) async -> AVPlayer {
-        let asset = AVAsset(url: clip.url)
+    private func createPlayer(for clip: VideoClip) async -> AVPlayer? {
+        guard let url = clip.url else { return nil }
+        let asset = AVAsset(url: url)
         
         let start = clip.startTime ?? 0.0
         let end: Double
@@ -254,7 +255,7 @@ struct VideoEditorView: View {
         }
         
         // Fallback
-        return AVPlayer(url: clip.url)
+        return AVPlayer(url: url)
     }
     
     private func playClip(_ clip: VideoClip) {
@@ -263,7 +264,7 @@ struct VideoEditorView: View {
         selectedClip = clip
         
         Task {
-            let player = await createPlayer(for: clip)
+            guard let player = await createPlayer(for: clip) else { return }
             guard selectedClip?.id == clip.id else { return } // Avoid race if user tapped another clip quickly
             
             NotificationCenter.default.addObserver(
@@ -308,7 +309,8 @@ struct VideoEditorView: View {
                 var isFirst = true
                 
                 for clip in selectedVideos {
-                    let asset = AVAsset(url: clip.url)
+                    guard let url = clip.url else { continue }
+                    let asset = AVAsset(url: url)
                     
                     // Load tracks and duration asynchronously
                     let videoTracks = try await asset.loadTracks(withMediaType: .video)
@@ -382,12 +384,13 @@ struct VideoEditorView: View {
                     var urlToPermanentPath = [URL: String]()
                     
                     for clip in selectedVideos {
+                        guard let url = clip.url else { continue }
                         let relativePath: String
-                        if let cachedPath = urlToPermanentPath[clip.url] {
+                        if let cachedPath = urlToPermanentPath[url] {
                             relativePath = cachedPath
                         } else {
-                            relativePath = try Project.saveClipToPermanentDirectory(from: clip.url)
-                            urlToPermanentPath[clip.url] = relativePath
+                            relativePath = try Project.saveClipToPermanentDirectory(from: url)
+                            urlToPermanentPath[url] = relativePath
                         }
                         
                         finalClipPaths.append(relativePath)
@@ -398,7 +401,7 @@ struct VideoEditorView: View {
                         if let e = clip.endTime {
                             end = e
                         } else {
-                            let asset = AVAsset(url: clip.url)
+                            let asset = AVAsset(url: url)
                             let dur = try? await asset.load(.duration)
                             end = dur?.seconds ?? 0.0
                         }

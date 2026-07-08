@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import Photos
 import AVKit
 import AVFoundation
 import UniformTypeIdentifiers
@@ -545,7 +546,8 @@ struct ImportClipsView: View {
                                 PhotosPicker(
                                     selection: $pickerItems,
                                     maxSelectionCount: 10,
-                                    matching: .videos
+                                    matching: .videos,
+                                    photoLibrary: .shared()
                                 ) {
                                     VStack(spacing: 8) {
                                         Image(systemName: "video.badge.plus")
@@ -593,15 +595,15 @@ struct ImportClipsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
                     .background(
-                        selectedVideos.isEmpty || isProcessing
+                        selectedVideos.isEmpty || isProcessing || selectedVideos.contains(where: { $0.isImporting })
                             ? AnyView(Color.gray.opacity(0.5))
                             : AnyView(LinearGradient(gradient: Gradient(colors: [.accentColor, .purple]), startPoint: .leading, endPoint: .trailing))
                     )
                     .cornerRadius(16)
-                    .shadow(color: !selectedVideos.isEmpty && !isProcessing ? .accentColor.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
+                    .shadow(color: !selectedVideos.isEmpty && !isProcessing && !selectedVideos.contains(where: { $0.isImporting }) ? .accentColor.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
                 }
                 .buttonStyle(ScaleButtonStyle())
-                .disabled(selectedVideos.isEmpty || isProcessing)
+                .disabled(selectedVideos.isEmpty || isProcessing || selectedVideos.contains(where: { $0.isImporting }))
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
             }
@@ -610,39 +612,84 @@ struct ImportClipsView: View {
             .onChange(of: pickerItems) { _, newItems in
                 if newItems.isEmpty { return }
                 isLoading = true
+                let currentCount = selectedVideos.count
                 Task {
-                    let importedClips = await withTaskGroup(of: (Int, VideoTransferable?).self) { group in
-                        for (index, item) in newItems.enumerated() {
-                            group.addTask {
-                                do {
-                                    let transferable = try await item.loadTransferable(type: VideoTransferable.self)
-                                    return (index, transferable)
-                                } catch {
-                                    print("Failed to load video: \(error)")
-                                    return (index, nil)
-                                }
-                            }
-                        }
-                        
-                        var results = [Int: VideoTransferable]()
-                        for await (index, transferable) in group {
-                            if let transferable = transferable {
-                                results[index] = transferable
-                            }
-                        }
-                        
-                        // Sort by original index to preserve selection order
-                        return newItems.indices.compactMap { results[$0] }
+                    // 1. Check and request readWrite authorization
+                    let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+                    let hasPermission = (status == .authorized || status == .limited)
+                    
+                    // 2. Immediately create placeholder clips on the main thread (without blocking on thumbnails)
+                    var tempClips: [VideoClip] = []
+                    for index in 0..<newItems.count {
+                        let clipNum = currentCount + index + 1
+                        let clip = VideoClip(
+                            url: nil,
+                            title: "Clip \(clipNum)",
+                            isImporting: true,
+                            thumbnailImage: nil
+                        )
+                        tempClips.append(clip)
                     }
                     
                     await MainActor.run {
-                        for transferable in importedClips {
-                            let clipNum = selectedVideos.count + 1
-                            selectedVideos.append(VideoClip(url: transferable.url, title: "Clip \(clipNum)"))
+                        selectedVideos.append(contentsOf: tempClips)
+                    }
+                    
+                    // 3. Import each video concurrently and update elements individually
+                    await withTaskGroup(of: Void.self) { group in
+                        for (index, item) in newItems.enumerated() {
+                            let targetClipId = tempClips[index].id
+                            let localID = item.itemIdentifier
+                            
+                            group.addTask {
+                                // Fetch thumbnail asynchronously in the background first so the placeholder updates quickly
+                                var fetchedThumbnail: UIImage? = nil
+                                if hasPermission, let localID = localID {
+                                    fetchedThumbnail = await fetchThumbnail(for: localID)
+                                    if let thumbnail = fetchedThumbnail {
+                                        await MainActor.run {
+                                            if let idx = selectedVideos.firstIndex(where: { $0.id == targetClipId }) {
+                                                selectedVideos[idx].thumbnailImage = thumbnail
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                do {
+                                    let transferable = try await item.loadTransferable(type: VideoTransferable.self)
+                                    guard let url = transferable?.url else {
+                                        throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to obtain local URL"])
+                                    }
+                                    
+                                    // Generate thumbnail from local URL if we don't already have one from PHPhotoLibrary
+                                    var finalThumbnail = fetchedThumbnail
+                                    if finalThumbnail == nil {
+                                        finalThumbnail = await generateThumbnail(for: url)
+                                    }
+                                    
+                                    let resultThumbnail = finalThumbnail
+                                    await MainActor.run {
+                                        if let idx = selectedVideos.firstIndex(where: { $0.id == targetClipId }) {
+                                            selectedVideos[idx].url = url
+                                            selectedVideos[idx].isImporting = false
+                                            selectedVideos[idx].thumbnailImage = resultThumbnail
+                                        }
+                                    }
+                                } catch {
+                                    print("Failed to import video: \(error)")
+                                    await MainActor.run {
+                                        // Remove the failed clip from selectedVideos
+                                        selectedVideos.removeAll(where: { $0.id == targetClipId })
+                                    }
+                                }
+                            }
                         }
-                        isLoading = false
+                    }
+                    
+                    await MainActor.run {
                         pickerItems = []
                         startBackgroundUploads()
+                        isLoading = false
                     }
                 }
             }
@@ -701,9 +748,9 @@ struct ImportClipsView: View {
         
         uploadTask = Task {
             while !Task.isCancelled {
-                // Find first video that is not uploaded, not currently uploading, and has no error
+                // Find first video that is not uploaded, not currently uploading, has no error, and has finished importing (has a non-nil url)
                 guard let index = selectedVideos.firstIndex(where: {
-                    $0.geminiFileURI == nil && !$0.isUploading && $0.uploadError == nil
+                    $0.url != nil && $0.geminiFileURI == nil && !$0.isUploading && $0.uploadError == nil
                 }) else {
                     break
                 }
@@ -714,9 +761,10 @@ struct ImportClipsView: View {
                 }
                 
                 let clip = selectedVideos[index]
+                guard let url = clip.url else { break }
                 
                 do {
-                    let compressedURL = try await Self.compressVideoForUpload(url: clip.url)
+                    let compressedURL = try await Self.compressVideoForUpload(url: url)
                     defer {
                         try? FileManager.default.removeItem(at: compressedURL)
                     }
@@ -772,10 +820,12 @@ struct ImportClipsView: View {
                 // A. Query duration of each clip concurrently to construct a clear prompt
                 let originalClipsWithDurations: [(clip: VideoClip, duration: Double)] = try await withThrowingTaskGroup(of: (Int, VideoClip, Double).self) { group in
                     for (index, clip) in selectedVideos.enumerated() {
-                        group.addTask {
-                            let asset = AVURLAsset(url: clip.url)
-                            let duration = try await asset.load(.duration)
-                            return (index, clip, duration.seconds)
+                        if let url = clip.url {
+                            group.addTask {
+                                let asset = AVURLAsset(url: url)
+                                let duration = try await asset.load(.duration)
+                                return (index, clip, duration.seconds)
+                            }
                         }
                     }
                     var results = [(Int, VideoClip, Double)]()
@@ -799,7 +849,10 @@ struct ImportClipsView: View {
                     if let cachedURI = item.clip.geminiFileURI {
                         activeURI = cachedURI
                     } else {
-                        let compressedURL = try await Self.compressVideoForUpload(url: item.clip.url)
+                        guard let url = item.clip.url else {
+                            throw GeminiError.apiError("Missing file URL for clip.")
+                        }
+                        let compressedURL = try await Self.compressVideoForUpload(url: url)
                         defer {
                             try? FileManager.default.removeItem(at: compressedURL)
                         }
@@ -880,7 +933,8 @@ struct ImportClipsView: View {
                         title: "\(originalClip.title) (Cut \(index + 1))",
                         geminiFileURI: originalClip.geminiFileURI,
                         startTime: cut.start_time,
-                        endTime: cut.end_time
+                        endTime: cut.end_time,
+                        thumbnailImage: originalClip.thumbnailImage
                     )
                     cutClips.append(newClip)
                 }
@@ -1010,15 +1064,17 @@ struct GeminiVideoPlan: Codable {
 // MARK: - UI Helper Components
 struct VideoClip: Identifiable, Hashable {
     let id: UUID
-    let url: URL
-    let title: String
+    var url: URL?
+    var title: String
     var geminiFileURI: String?
     var isUploading: Bool
     var uploadError: String?
     var startTime: Double?
     var endTime: Double?
+    var isImporting: Bool
+    var thumbnailImage: UIImage?
     
-    init(id: UUID = UUID(), url: URL, title: String, geminiFileURI: String? = nil, isUploading: Bool = false, uploadError: String? = nil, startTime: Double? = nil, endTime: Double? = nil) {
+    init(id: UUID = UUID(), url: URL? = nil, title: String, geminiFileURI: String? = nil, isUploading: Bool = false, uploadError: String? = nil, startTime: Double? = nil, endTime: Double? = nil, isImporting: Bool = false, thumbnailImage: UIImage? = nil) {
         self.id = id
         self.url = url
         self.title = title
@@ -1027,14 +1083,33 @@ struct VideoClip: Identifiable, Hashable {
         self.uploadError = uploadError
         self.startTime = startTime
         self.endTime = endTime
+        self.isImporting = isImporting
+        self.thumbnailImage = thumbnailImage
     }
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
+        hasher.combine(url)
+        hasher.combine(title)
+        hasher.combine(geminiFileURI)
+        hasher.combine(isUploading)
+        hasher.combine(uploadError)
+        hasher.combine(startTime)
+        hasher.combine(endTime)
+        hasher.combine(isImporting)
     }
     
     static func == (lhs: VideoClip, rhs: VideoClip) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id &&
+        lhs.url == rhs.url &&
+        lhs.title == rhs.title &&
+        lhs.geminiFileURI == rhs.geminiFileURI &&
+        lhs.isUploading == rhs.isUploading &&
+        lhs.uploadError == rhs.uploadError &&
+        lhs.startTime == rhs.startTime &&
+        lhs.endTime == rhs.endTime &&
+        lhs.isImporting == rhs.isImporting &&
+        lhs.thumbnailImage == rhs.thumbnailImage
     }
 }
 
@@ -1047,9 +1122,45 @@ struct VideoPlayerThumbnail: View {
             if let player = player {
                 VideoPlayer(player: player)
                     .disabled(true) // Disable standard media controls
+            } else if let thumbnail = video.thumbnailImage {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+                
+                if video.isImporting {
+                    Color.black.opacity(0.3)
+                    ProgressView()
+                        .tint(.white)
+                }
             } else {
-                Color.black
-                ProgressView()
+                Color(.secondarySystemBackground)
+                if video.isImporting {
+                    ProgressView()
+                } else {
+                    Image(systemName: "video.slash")
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            // Glassmorphic checkmark badge in top-left when completed
+            if !video.isImporting {
+                VStack {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .frame(width: 28, height: 28)
+                                .shadow(color: .black.opacity(0.15), radius: 4)
+                            
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(.green)
+                        }
+                        .padding(8)
+                        Spacer()
+                    }
+                    Spacer()
+                }
             }
             
             // Upload Status Overlay in top right corner
@@ -1114,25 +1225,35 @@ struct VideoPlayerThumbnail: View {
         .clipped()
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
         .onAppear {
-            let player = AVPlayer(url: video.url)
-            player.isMuted = true
-            self.player = player
-            
-            // Loop video play
-            NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: player.currentItem,
-                queue: .main
-            ) { _ in
-                player.seek(to: .zero)
-                player.play()
-            }
-            player.play()
+            setupPlayer()
+        }
+        .onChange(of: video.url) { _, _ in
+            setupPlayer()
         }
         .onDisappear {
             player?.pause()
             player = nil
         }
+    }
+    
+    private func setupPlayer() {
+        guard let url = video.url else { return }
+        if player != nil { return }
+        
+        let player = AVPlayer(url: url)
+        player.isMuted = true
+        self.player = player
+        
+        // Loop video play
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { _ in
+            player.seek(to: .zero)
+            player.play()
+        }
+        player.play()
     }
 }
 
@@ -1193,6 +1314,43 @@ func copyVideoToTemporaryDirectory(from url: URL) -> URL? {
     }
 }
 
+func fetchThumbnail(for localIdentifier: String) async -> UIImage? {
+    let result = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+    guard let asset = result.firstObject else { return nil }
+    
+    let options = PHImageRequestOptions()
+    options.isNetworkAccessAllowed = true
+    options.deliveryMode = .fastFormat
+    options.isSynchronous = true
+    
+    var fetchedImage: UIImage? = nil
+    PHImageManager.default().requestImage(
+        for: asset,
+        targetSize: CGSize(width: 300, height: 300),
+        contentMode: .aspectFill,
+        options: options
+    ) { image, _ in
+        fetchedImage = image
+    }
+    return fetchedImage
+}
+
+func generateThumbnail(for url: URL) async -> UIImage? {
+    let asset = AVAsset(url: url)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    
+    do {
+        let time = CMTime(seconds: 0.1, preferredTimescale: 600)
+        let (cgImage, _) = try await generator.image(at: time)
+        return UIImage(cgImage: cgImage)
+    } catch {
+        print("Thumbnail generation failed: \(error)")
+        return nil
+    }
+}
+
+
 #Preview {
     ContentView()
         .modelContainer(for: Project.self, inMemory: true)
@@ -1210,7 +1368,11 @@ struct VideoTransferable: Transferable {
             if FileManager.default.fileExists(atPath: destinationURL.path) {
                 try? FileManager.default.removeItem(at: destinationURL)
             }
-            try FileManager.default.copyItem(at: received.file, to: destinationURL)
+            do {
+                try FileManager.default.moveItem(at: received.file, to: destinationURL)
+            } catch {
+                try FileManager.default.copyItem(at: received.file, to: destinationURL)
+            }
             return VideoTransferable(url: destinationURL)
         }
     }
