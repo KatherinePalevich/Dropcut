@@ -123,6 +123,13 @@ struct ContentView: View {
 struct WelcomeView: View {
     @Binding var navigationPath: NavigationPath
     @State private var showSettings = false
+    @State private var showAPIKeySetup = false
+    
+    /// Returns true if a valid API key has already been stored.
+    private var hasStoredAPIKey: Bool {
+        let key = UserDefaults.standard.string(forKey: "GeminiAPIKey") ?? ""
+        return !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     
     var body: some View {
         ZStack {
@@ -187,7 +194,13 @@ struct WelcomeView: View {
                 Spacer()
                 
                 Button(action: {
-                    navigationPath.append(AppScreen.preferences)
+                    if hasStoredAPIKey {
+                        // Key already configured — go straight to preferences
+                        navigationPath.append(AppScreen.preferences)
+                    } else {
+                        // First launch — must set up API key first
+                        showAPIKeySetup = true
+                    }
                 }) {
                     Text("Get Started")
                         .font(.headline)
@@ -211,6 +224,287 @@ struct WelcomeView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $showAPIKeySetup) {
+            APIKeySetupView {
+                // Called after the key is validated and saved
+                showAPIKeySetup = false
+                navigationPath.append(AppScreen.preferences)
+            }
+        }
+    }
+}
+
+// MARK: - API Key Setup View (First-Launch Onboarding)
+struct APIKeySetupView: View {
+    /// Called when the key has been successfully validated and saved.
+    let onSuccess: () -> Void
+    
+    @Environment(\.dismiss) private var dismiss
+    @State private var apiKey: String = ""
+    @State private var isSecure: Bool = true
+    @State private var isValidating: Bool = false
+    @State private var errorMessage: String? = nil
+    
+    private var trimmedKey: String {
+        apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                // Background
+                LinearGradient(
+                    gradient: Gradient(colors: [Color(.systemBackground), Color(.secondarySystemBackground)]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 32) {
+                        // Hero section
+                        VStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [.accentColor.opacity(0.15), .purple.opacity(0.1)]),
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .frame(width: 100, height: 100)
+                                
+                                Image(systemName: "key.fill")
+                                    .font(.system(size: 44))
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [.accentColor, .purple]),
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                            }
+                            .shadow(color: .accentColor.opacity(0.2), radius: 12, x: 0, y: 6)
+                            
+                            VStack(spacing: 8) {
+                                Text("Connect to Gemini AI")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.primary)
+                                
+                                Text("Dropcut uses Google Gemini to intelligently analyze and edit your videos. A free API key from Google AI Studio is required.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.horizontal, 8)
+                            }
+                        }
+                        .padding(.top, 16)
+                        
+                        // Step guide
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("How to get your free API key:")
+                                .font(.footnote)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
+                                .textCase(.uppercase)
+                                .kerning(0.5)
+                            
+                            ForEach([
+                                ("1", "arrow.up.right.square", "Visit Google AI Studio"),
+                                ("2", "person.crop.circle.badge.checkmark", "Sign in with your Google account"),
+                                ("3", "key.horizontal", "Create a new API key"),
+                                ("4", "doc.on.clipboard", "Copy and paste it below")
+                            ], id: \.0) { step, icon, label in
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color.accentColor.opacity(0.12))
+                                            .frame(width: 32, height: 32)
+                                        Image(systemName: icon)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    Text(label)
+                                        .font(.subheadline)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                }
+                            }
+                            
+                            Link(destination: URL(string: "https://aistudio.google.com/apikey")!) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up.right.square.fill")
+                                    Text("Open Google AI Studio")
+                                        .fontWeight(.semibold)
+                                }
+                                .font(.subheadline)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color(red: 0.18, green: 0.46, blue: 1.0), Color(red: 0.4, green: 0.2, blue: 0.9)]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .cornerRadius(12)
+                            }
+                            .padding(.top, 4)
+                        }
+                        .padding(20)
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                        )
+                        
+                        // API Key input card
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Your API Key")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
+                                .textCase(.uppercase)
+                                .kerning(0.5)
+                            
+                            HStack(spacing: 12) {
+                                Image(systemName: "key")
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 20)
+                                
+                                if isSecure {
+                                    SecureField("AIzaSy...", text: $apiKey)
+                                        .font(.body)
+                                        .autocorrectionDisabled()
+                                        .textInputAutocapitalization(.never)
+                                        .onChange(of: apiKey) { _, _ in
+                                            // Clear error when user starts editing
+                                            errorMessage = nil
+                                        }
+                                } else {
+                                    TextField("AIzaSy...", text: $apiKey)
+                                        .font(.body)
+                                        .autocorrectionDisabled()
+                                        .textInputAutocapitalization(.never)
+                                        .onChange(of: apiKey) { _, _ in
+                                            errorMessage = nil
+                                        }
+                                }
+                                
+                                Button(action: { isSecure.toggle() }) {
+                                    Image(systemName: isSecure ? "eye.slash" : "eye")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding()
+                            .background(Color(.tertiarySystemBackground))
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(
+                                        errorMessage != nil ? Color.red.opacity(0.6) : Color.primary.opacity(0.06),
+                                        lineWidth: errorMessage != nil ? 1.5 : 1
+                                    )
+                            )
+                            
+                            // Inline error message
+                            if let errorMessage {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.red)
+                                        .font(.caption)
+                                        .padding(.top, 1)
+                                    Text(errorMessage)
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(.top, 2)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
+                        
+                        // Validate & Continue button
+                        Button(action: validateAndContinue) {
+                            HStack(spacing: 10) {
+                                if isValidating {
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(0.9)
+                                } else {
+                                    Image(systemName: "checkmark.shield.fill")
+                                        .font(.headline)
+                                }
+                                Text(isValidating ? "Validating..." : "Validate & Continue")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                trimmedKey.isEmpty || isValidating
+                                    ? AnyView(Color.gray.opacity(0.4))
+                                    : AnyView(LinearGradient(
+                                        gradient: Gradient(colors: [.accentColor, .purple]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                      ))
+                            )
+                            .cornerRadius(16)
+                            .shadow(
+                                color: (!trimmedKey.isEmpty && !isValidating) ? .accentColor.opacity(0.35) : .clear,
+                                radius: 10, x: 0, y: 5
+                            )
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                        .disabled(trimmedKey.isEmpty || isValidating)
+                        
+                        Text("Your key is stored securely on your device and is never shared.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 32)
+                    .animation(.easeInOut(duration: 0.2), value: errorMessage)
+                }
+            }
+            .navigationTitle("API Key Setup")
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(true) // Prevent swipe-to-dismiss without a key
+        }
+    }
+    
+    private func validateAndContinue() {
+        guard !trimmedKey.isEmpty else { return }
+        
+        isValidating = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                try await GeminiService.validateAPIKey(trimmedKey)
+                
+                // Key is valid — save it and proceed
+                UserDefaults.standard.set(trimmedKey, forKey: "GeminiAPIKey")
+                
+                await MainActor.run {
+                    isValidating = false
+                    onSuccess()
+                }
+            } catch {
+                await MainActor.run {
+                    isValidating = false
+                    errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 }

@@ -12,17 +12,20 @@ enum GeminiError: Error, LocalizedError {
     case apiError(String)
     case invalidResponse
     case fileProcessingFailed
+    case invalidAPIKey
     
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid API URL."
+            return "Something went wrong internally. Please restart the app and try again."
         case .apiError(let message):
             return message
         case .invalidResponse:
-            return "Received an invalid response from the Gemini API."
+            return "We received an unexpected response. Please try again."
         case .fileProcessingFailed:
-            return "Gemini failed to process the video files."
+            return "We weren't able to process one of your video files. Try re-importing the clip."
+        case .invalidAPIKey:
+            return "That API key wasn't accepted. Please check that you copied it correctly from Google AI Studio."
         }
     }
 }
@@ -261,6 +264,47 @@ struct GeminiService {
         }
         
         return text
+    }
+    
+    // Validates an API key using the lightweight GET /v1beta/models endpoint.
+    // This is the correct way to check key validity: no tokens consumed, no model-availability
+    // edge cases, and a clean 200 vs 400/403 response for valid vs invalid keys.
+    static func validateAPIKey(_ apiKey: String) async throws {
+        let urlString = "https://generativelanguage.googleapis.com/v1beta/models?key=\(apiKey)&pageSize=1"
+        guard let url = URL(string: urlString) else {
+            throw GeminiError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GeminiError.invalidResponse
+        }
+        
+        switch httpResponse.statusCode {
+        case 200:
+            return // Key is valid
+        case 400, 401, 403:
+            // Extract the API error message if present for a clearer user-facing error
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorDict = errorJson["error"] as? [String: Any],
+               let message = errorDict["message"] as? String {
+                throw GeminiError.apiError(message)
+            }
+            throw GeminiError.invalidAPIKey
+        default:
+            // Surface the actual HTTP status to help with debugging unexpected failures
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorDict = errorJson["error"] as? [String: Any],
+               let message = errorDict["message"] as? String {
+                throw GeminiError.apiError(message)
+            }
+            throw GeminiError.apiError("Could not reach Gemini API (HTTP \(httpResponse.statusCode)). Check your connection and try again.")
+        }
     }
 }
 

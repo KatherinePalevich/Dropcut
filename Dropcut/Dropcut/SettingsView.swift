@@ -12,6 +12,9 @@ struct SettingsView: View {
     @State private var apiKey: String = ""
     @State private var isSecure: Bool = true
     @State private var showSaveConfirmation: Bool = false
+    @State private var isValidating: Bool = false
+    @State private var validationErrorMessage: String? = nil
+    @State private var showValidationError: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -103,16 +106,40 @@ struct SettingsView: View {
 
                     // Save Button
                     Button(action: {
-                        UserDefaults.standard.set(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "GeminiAPIKey")
-                        withAnimation {
-                            showSaveConfirmation = true
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            dismiss()
+                        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        isValidating = true
+                        Task {
+                            do {
+                                try await GeminiService.validateAPIKey(trimmedKey)
+                                UserDefaults.standard.set(trimmedKey, forKey: "GeminiAPIKey")
+                                await MainActor.run {
+                                    isValidating = false
+                                    withAnimation {
+                                        showSaveConfirmation = true
+                                    }
+                                }
+                                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                                await MainActor.run {
+                                    dismiss()
+                                }
+                            } catch {
+                                await MainActor.run {
+                                    isValidating = false
+                                    validationErrorMessage = error.localizedDescription
+                                    showValidationError = true
+                                }
+                            }
                         }
                     }) {
                         HStack {
-                            if showSaveConfirmation {
+                            if isValidating {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.9)
+                                Text("Validating…")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                            } else if showSaveConfirmation {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.headline)
                                 Text("Saved Successfully!")
@@ -136,7 +163,7 @@ struct SettingsView: View {
                         .shadow(color: showSaveConfirmation ? .green.opacity(0.3) : .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
                     }
                     .buttonStyle(ScaleButtonStyle())
-                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !showSaveConfirmation)
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValidating || showSaveConfirmation)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 20)
                 }
@@ -147,10 +174,16 @@ struct SettingsView: View {
                     Button("Close") {
                         dismiss()
                     }
+                    .disabled(isValidating)
                 }
             }
             .onAppear {
                 apiKey = UserDefaults.standard.string(forKey: "GeminiAPIKey") ?? ""
+            }
+            .alert("Invalid API Key", isPresented: $showValidationError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(validationErrorMessage ?? "The API key could not be verified. Please check it and try again.")
             }
         }
     }
