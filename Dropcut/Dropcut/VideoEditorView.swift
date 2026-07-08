@@ -21,6 +21,7 @@ struct VideoEditorView: View {
     @State private var activePlayer: AVPlayer? = nil
     @State private var selectedClip: VideoClip? = nil
     @State private var draggingClip: VideoClip? = nil
+    @State private var justDroppedClipID: UUID? = nil
     
     @State private var isExporting = false
     @State private var showAlert = false
@@ -65,48 +66,82 @@ struct VideoEditorView: View {
                 activePlayer = nil
             }
             
-            // Timeline Tracks
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 8) {
-                    // Video Track
-                    HStack(spacing: 8) {
-                        Image(systemName: "film")
-                            .foregroundColor(.accentColor)
-                            .padding(.leading, 8)
-                        
-                        if selectedVideos.isEmpty {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(width: 200, height: 40)
-                                .overlay(
-                                    Text("No clips imported")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                )
-                        } else {
-                            ForEach(selectedVideos) { video in
-                                TimelineClipView(
-                                    video: video,
-                                    isSelected: selectedClip == video
-                                ) {
-                                    playClip(video)
+            // Timeline Area
+            VStack(alignment: .leading, spacing: 0) {
+
+                // Reorder hint — only visible when there are 2+ clips
+                if selectedVideos.count > 1 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text("Drag clips to reorder")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 2)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                // Timeline Tracks
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Video Track
+                        HStack(spacing: 8) {
+                            Image(systemName: "film")
+                                .foregroundColor(.accentColor)
+                                .padding(.leading, 8)
+
+                            if selectedVideos.isEmpty {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 200, height: 44)
+                                    .overlay(
+                                        Text("No clips imported")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    )
+                            } else {
+                                ForEach(selectedVideos) { video in
+                                    TimelineClipView(
+                                        video: video,
+                                        isSelected: selectedClip == video,
+                                        isDragging: draggingClip?.id == video.id,
+                                        justDropped: justDroppedClipID == video.id,
+                                        showHandle: selectedVideos.count > 1
+                                    ) {
+                                        playClip(video)
+                                    }
+                                    .onDrag {
+                                        self.draggingClip = video
+                                        return NSItemProvider(object: video.id.uuidString as NSString)
+                                    }
+                                    .onDrop(of: [.text], delegate: ClipDropDelegate(
+                                        item: video,
+                                        items: $selectedVideos,
+                                        draggedItem: $draggingClip,
+                                        onDropped: { droppedID in
+                                            withAnimation(.easeInOut(duration: 0.15)) {
+                                                justDroppedClipID = droppedID
+                                            }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                                                withAnimation(.easeOut(duration: 0.3)) {
+                                                    justDroppedClipID = nil
+                                                }
+                                            }
+                                        }
+                                    ))
                                 }
-                                .onDrag {
-                                    self.draggingClip = video
-                                    return NSItemProvider(object: video.id.uuidString as NSString)
-                                }
-                                .onDrop(of: [.text], delegate: ClipDropDelegate(
-                                    item: video,
-                                    items: $selectedVideos,
-                                    draggedItem: $draggingClip
-                                ))
                             }
                         }
                     }
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
             }
             .background(Color(.systemGroupedBackground))
+            .animation(.easeInOut(duration: 0.2), value: selectedVideos.count)
             
             if !geminiPrompt.isEmpty {
                 DisclosureGroup(
@@ -486,38 +521,66 @@ struct VideoEditorView: View {
 struct TimelineClipView: View {
     let video: VideoClip
     let isSelected: Bool
+    let isDragging: Bool
+    let justDropped: Bool
+    let showHandle: Bool
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             ZStack {
+                // Background
                 if isSelected {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(LinearGradient(gradient: Gradient(colors: [.accentColor, .purple]), startPoint: .leading, endPoint: .trailing))
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(LinearGradient(
+                            gradient: Gradient(colors: [.accentColor, .purple]),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ))
                 } else {
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 8)
                         .fill(Color(.secondarySystemBackground))
                 }
-                
-                HStack {
+
+                HStack(spacing: 5) {
+                    // Drag handle grip — universal iOS drag affordance
+                    if showHandle {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(isSelected ? .white.opacity(0.55) : .secondary.opacity(0.55))
+                    }
+
                     Image(systemName: "video.fill")
                         .font(.caption)
                         .foregroundColor(isSelected ? .white : .primary)
+
                     Text(video.title)
                         .font(.caption)
                         .bold()
                         .foregroundColor(isSelected ? .white : .primary)
                         .lineLimit(1)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 10)
             }
-            .frame(width: 140, height: 40)
+            .frame(width: 150, height: 44)
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        justDropped ? Color.green : (isSelected ? Color.accentColor : Color.clear),
+                        lineWidth: justDropped ? 2.5 : 1.5
+                    )
             )
         }
         .buttonStyle(ScaleButtonStyle())
+        // Drag-state visual lift: fades and shrinks the dragged card
+        .scaleEffect(isDragging ? 0.91 : 1.0)
+        .opacity(isDragging ? 0.55 : 1.0)
+        .shadow(
+            color: isDragging ? Color.black.opacity(0.28) : .clear,
+            radius: 10, x: 0, y: 6
+        )
+        .animation(.spring(response: 0.3, dampingFraction: 0.65), value: isDragging)
+        .animation(.easeInOut(duration: 0.25), value: justDropped)
     }
 }
 
@@ -540,25 +603,32 @@ struct ClipDropDelegate: DropDelegate {
     let item: VideoClip
     @Binding var items: [VideoClip]
     @Binding var draggedItem: VideoClip?
-    
+    var onDropped: ((UUID) -> Void)? = nil
+
     func performDrop(info: DropInfo) -> Bool {
+        // Capture the dropped clip's ID before clearing state so the
+        // parent can trigger a confirmation flash on the reordered card.
+        let droppedID = draggedItem?.id
         draggedItem = nil
+        if let id = droppedID {
+            onDropped?(id)
+        }
         return true
     }
-    
+
     func dropEntered(info: DropInfo) {
         guard let draggedItem = draggedItem else { return }
         if draggedItem != item {
             let from = items.firstIndex(of: draggedItem)
             let to = items.firstIndex(of: item)
             if let from = from, let to = to {
-                withAnimation {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     items.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
                 }
             }
         }
     }
-    
+
     func dropUpdated(info: DropInfo) -> DropProposal? {
         return DropProposal(operation: .move)
     }
