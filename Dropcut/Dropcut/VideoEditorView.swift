@@ -31,6 +31,12 @@ struct VideoEditorView: View {
     @State private var isPromptExpanded = false
     @State private var isCopied = false
     
+    private let pointsPerSecond: CGFloat = 40.0
+    
+    private var totalDuration: Double {
+        selectedVideos.reduce(0.0) { $0 + $1.timelineDuration }
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Video Preview Area
@@ -86,15 +92,26 @@ struct VideoEditorView: View {
                 }
 
                 // Timeline Tracks
-                ScrollView(.horizontal, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Video Track
-                        HStack(spacing: 8) {
-                            Image(systemName: "film")
-                                .foregroundColor(.accentColor)
-                                .padding(.leading, 8)
-
+                HStack(spacing: 0) {
+                    // Fixed track headers sidebar
+                    VStack(alignment: .center, spacing: 8) {
+                        // Space matching height of TimelineTicksView
+                        Spacer()
+                            .frame(height: 24)
+                        
+                        Image(systemName: "film")
+                            .foregroundColor(.accentColor)
+                            .frame(width: 32, height: 44) // matches TimelineClipView height
+                    }
+                    .padding(.leading, 12)
+                    .padding(.trailing, 8)
+                    
+                    // Scrollable timeline
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 8) {
                             if selectedVideos.isEmpty {
+                                Spacer()
+                                    .frame(height: 24)
                                 RoundedRectangle(cornerRadius: 8)
                                     .fill(Color.gray.opacity(0.2))
                                     .frame(width: 200, height: 44)
@@ -104,40 +121,48 @@ struct VideoEditorView: View {
                                             .foregroundColor(.secondary)
                                     )
                             } else {
-                                ForEach(selectedVideos) { video in
-                                    TimelineClipView(
-                                        video: video,
-                                        isSelected: selectedClip == video,
-                                        isDragging: draggingClip?.id == video.id,
-                                        justDropped: justDroppedClipID == video.id,
-                                        showHandle: selectedVideos.count > 1
-                                    ) {
-                                        playClip(video)
-                                    }
-                                    .onDrag {
-                                        self.draggingClip = video
-                                        return NSItemProvider(object: video.id.uuidString as NSString)
-                                    }
-                                    .onDrop(of: [.text], delegate: ClipDropDelegate(
-                                        item: video,
-                                        items: $selectedVideos,
-                                        draggedItem: $draggingClip,
-                                        onDropped: { droppedID in
-                                            withAnimation(.easeInOut(duration: 0.15)) {
-                                                justDroppedClipID = droppedID
-                                            }
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                                                withAnimation(.easeOut(duration: 0.3)) {
-                                                    justDroppedClipID = nil
+                                // Tick marks timeline ruler
+                                TimelineTicksView(totalDuration: totalDuration, pointsPerSecond: pointsPerSecond)
+                                
+                                // Video clips row
+                                HStack(spacing: 0) {
+                                    ForEach(selectedVideos) { video in
+                                        TimelineClipView(
+                                            video: video,
+                                            isSelected: selectedClip == video,
+                                            isDragging: draggingClip?.id == video.id,
+                                            justDropped: justDroppedClipID == video.id,
+                                            showHandle: selectedVideos.count > 1,
+                                            width: CGFloat(video.timelineDuration) * pointsPerSecond
+                                        ) {
+                                            playClip(video)
+                                        }
+                                        .onDrag {
+                                            self.draggingClip = video
+                                            return NSItemProvider(object: video.id.uuidString as NSString)
+                                        }
+                                        .onDrop(of: [.text], delegate: ClipDropDelegate(
+                                            item: video,
+                                            items: $selectedVideos,
+                                            draggedItem: $draggingClip,
+                                            onDropped: { droppedID in
+                                                withAnimation(.easeInOut(duration: 0.15)) {
+                                                    justDroppedClipID = droppedID
+                                                }
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                                                    withAnimation(.easeOut(duration: 0.3)) {
+                                                        justDroppedClipID = nil
+                                                    }
                                                 }
                                             }
-                                        }
-                                    ))
+                                        ))
+                                    }
                                 }
                             }
                         }
+                        .padding(.vertical)
+                        .padding(.horizontal, 16) // Prevent clipping of edge text
                     }
-                    .padding(.vertical)
                 }
             }
             .background(Color(.systemGroupedBackground))
@@ -245,6 +270,18 @@ struct VideoEditorView: View {
             }
         } message: {
             Text(alertMessage)
+        }
+        .task {
+            for index in selectedVideos.indices {
+                if selectedVideos[index].duration == nil, let url = selectedVideos[index].url {
+                    let asset = AVAsset(url: url)
+                    if let duration = try? await asset.load(.duration).seconds {
+                        await MainActor.run {
+                            selectedVideos[index].duration = duration
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -517,6 +554,71 @@ struct VideoEditorView: View {
     }
 }
 
+// MARK: - VideoClip Timeline Helpers
+extension VideoClip {
+    var timelineDuration: Double {
+        if let start = startTime, let end = endTime {
+            return max(0.1, end - start)
+        }
+        if let duration = duration {
+            return max(0.1, duration)
+        }
+        return 3.75 // Default fallback duration (equivalent to 150 points at 40 points/sec)
+    }
+}
+
+// MARK: - Timeline Ticks View
+struct TimelineTicksView: View {
+    let totalDuration: Double
+    let pointsPerSecond: CGFloat
+    
+    var body: some View {
+        let totalWidth = CGFloat(totalDuration) * pointsPerSecond
+        let maxSecond = Int(totalDuration)
+        
+        ZStack(alignment: .leading) {
+            // A bottom divider line for the timeline ruler
+            Rectangle()
+                .fill(Color.secondary.opacity(0.3))
+                .frame(height: 1)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+            
+            // Loop through all seconds up to totalDuration
+            ForEach(0...maxSecond, id: \.self) { second in
+                let xPosition = CGFloat(second) * pointsPerSecond
+                
+                if second % 2 == 0 {
+                    // Even second: timestamp
+                    VStack(spacing: 2) {
+                        Text(formatTimestamp(second))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        
+                        // Tiny tick mark under timestamp
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.7))
+                            .frame(width: 1, height: 6)
+                    }
+                    .position(x: xPosition, y: 12)
+                } else {
+                    // Odd second: tick mark
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 1, height: 8)
+                        .position(x: xPosition, y: 18)
+                }
+            }
+        }
+        .frame(width: totalWidth, height: 24)
+    }
+    
+    private func formatTimestamp(_ seconds: Int) -> String {
+        let minutes = seconds / 60
+        let secs = seconds % 60
+        return String(format: "%d:%02d", minutes, secs)
+    }
+}
+
 // MARK: - Timeline Clip View
 struct TimelineClipView: View {
     let video: VideoClip
@@ -524,6 +626,7 @@ struct TimelineClipView: View {
     let isDragging: Bool
     let justDropped: Bool
     let showHandle: Bool
+    let width: CGFloat
     let action: () -> Void
 
     var body: some View {
@@ -544,7 +647,7 @@ struct TimelineClipView: View {
 
                 HStack(spacing: 5) {
                     // Drag handle grip — universal iOS drag affordance
-                    if showHandle {
+                    if showHandle && width > 60 {
                         Image(systemName: "line.3.horizontal")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(isSelected ? .white.opacity(0.55) : .secondary.opacity(0.55))
@@ -554,15 +657,17 @@ struct TimelineClipView: View {
                         .font(.caption)
                         .foregroundColor(isSelected ? .white : .primary)
 
-                    Text(video.title)
-                        .font(.caption)
-                        .bold()
-                        .foregroundColor(isSelected ? .white : .primary)
-                        .lineLimit(1)
+                    if width > 40 {
+                        Text(video.title)
+                            .font(.caption)
+                            .bold()
+                            .foregroundColor(isSelected ? .white : .primary)
+                            .lineLimit(1)
+                    }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, min(10, width / 10))
             }
-            .frame(width: 150, height: 44)
+            .frame(width: width, height: 44)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(

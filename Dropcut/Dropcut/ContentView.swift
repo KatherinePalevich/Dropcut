@@ -949,6 +949,9 @@ struct ImportClipsView: View {
                                         throw NSError(domain: "Dropcut", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to obtain local URL"])
                                     }
                                     
+                                    let asset = AVAsset(url: url)
+                                    let duration = try? await asset.load(.duration).seconds
+                                    
                                     // Generate thumbnail from local URL if we don't already have one from PHPhotoLibrary
                                     var finalThumbnail = fetchedThumbnail
                                     if finalThumbnail == nil {
@@ -961,6 +964,7 @@ struct ImportClipsView: View {
                                             selectedVideos[idx].url = url
                                             selectedVideos[idx].isImporting = false
                                             selectedVideos[idx].thumbnailImage = resultThumbnail
+                                            selectedVideos[idx].duration = duration
                                         }
                                     }
                                 } catch {
@@ -1222,7 +1226,8 @@ struct ImportClipsView: View {
                         geminiFileURI: originalClip.geminiFileURI,
                         startTime: cut.start_time,
                         endTime: cut.end_time,
-                        thumbnailImage: originalClip.thumbnailImage
+                        thumbnailImage: originalClip.thumbnailImage,
+                        duration: originalClip.duration
                     )
                     cutClips.append(newClip)
                 }
@@ -1361,8 +1366,9 @@ struct VideoClip: Identifiable, Hashable {
     var endTime: Double?
     var isImporting: Bool
     var thumbnailImage: UIImage?
+    var duration: Double?
     
-    init(id: UUID = UUID(), url: URL? = nil, title: String, geminiFileURI: String? = nil, isUploading: Bool = false, uploadError: String? = nil, startTime: Double? = nil, endTime: Double? = nil, isImporting: Bool = false, thumbnailImage: UIImage? = nil) {
+    init(id: UUID = UUID(), url: URL? = nil, title: String, geminiFileURI: String? = nil, isUploading: Bool = false, uploadError: String? = nil, startTime: Double? = nil, endTime: Double? = nil, isImporting: Bool = false, thumbnailImage: UIImage? = nil, duration: Double? = nil) {
         self.id = id
         self.url = url
         self.title = title
@@ -1373,6 +1379,7 @@ struct VideoClip: Identifiable, Hashable {
         self.endTime = endTime
         self.isImporting = isImporting
         self.thumbnailImage = thumbnailImage
+        self.duration = duration
     }
     
     func hash(into hasher: inout Hasher) {
@@ -1385,6 +1392,7 @@ struct VideoClip: Identifiable, Hashable {
         hasher.combine(startTime)
         hasher.combine(endTime)
         hasher.combine(isImporting)
+        hasher.combine(duration)
     }
     
     static func == (lhs: VideoClip, rhs: VideoClip) -> Bool {
@@ -1397,7 +1405,8 @@ struct VideoClip: Identifiable, Hashable {
         lhs.startTime == rhs.startTime &&
         lhs.endTime == rhs.endTime &&
         lhs.isImporting == rhs.isImporting &&
-        lhs.thumbnailImage == rhs.thumbnailImage
+        lhs.thumbnailImage == rhs.thumbnailImage &&
+        lhs.duration == rhs.duration
     }
 }
 
