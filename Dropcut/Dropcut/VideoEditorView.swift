@@ -633,16 +633,38 @@ struct TimelineClipView: View {
         Button(action: action) {
             ZStack {
                 // Background
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(LinearGradient(
-                            gradient: Gradient(colors: [.accentColor, .purple]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ))
+                if let img = video.thumbnailImage {
+                    let aspect = img.size.height > 0 ? (img.size.width / img.size.height) : 1.6
+                    let scaledWidth = max(10, 44.0 * aspect)
+                    let repeatCount = max(1, Int(ceil(width / scaledWidth)))
+                    
+                    HStack(spacing: 0) {
+                        ForEach(0..<repeatCount, id: \.self) { _ in
+                            Image(uiImage: img)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: scaledWidth, height: 44)
+                                .clipped()
+                        }
+                    }
+                    .frame(width: width, alignment: .leading)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(isSelected ? 0.25 : 0.45))
+                    )
                 } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.secondarySystemBackground))
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(LinearGradient(
+                                gradient: Gradient(colors: [.accentColor, .purple]),
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            ))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.secondarySystemBackground))
+                    }
                 }
 
                 HStack(spacing: 5) {
@@ -650,20 +672,14 @@ struct TimelineClipView: View {
                     if showHandle && width > 60 {
                         Image(systemName: "line.3.horizontal")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(isSelected ? .white.opacity(0.55) : .secondary.opacity(0.55))
+                            .foregroundColor(video.thumbnailImage != nil ? .white.opacity(0.7) : (isSelected ? .white.opacity(0.55) : .secondary.opacity(0.55)))
                     }
 
                     Image(systemName: "video.fill")
                         .font(.caption)
-                        .foregroundColor(isSelected ? .white : .primary)
+                        .foregroundColor(video.thumbnailImage != nil ? .white : (isSelected ? .white : .primary))
 
-                    if width > 40 {
-                        Text(video.title)
-                            .font(.caption)
-                            .bold()
-                            .foregroundColor(isSelected ? .white : .primary)
-                            .lineLimit(1)
-                    }
+
                 }
                 .padding(.horizontal, min(10, width / 10))
             }

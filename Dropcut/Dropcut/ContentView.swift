@@ -1246,9 +1246,30 @@ struct ImportClipsView: View {
                 
             } catch {
                 await MainActor.run {
-                    self.isProcessing = false
-                    self.errorMessage = error.localizedDescription
-                    self.showErrorAlert = true
+                    var fallbackClips: [VideoClip] = []
+                    for clip in selectedVideos {
+                        let dur = clip.duration ?? 5.0
+                        let newClip = VideoClip(
+                            url: clip.url,
+                            title: clip.title,
+                            geminiFileURI: clip.geminiFileURI,
+                            startTime: 0.0,
+                            endTime: dur,
+                            thumbnailImage: clip.thumbnailImage,
+                            duration: dur
+                        )
+                        fallbackClips.append(newClip)
+                    }
+                    
+                    if !fallbackClips.isEmpty {
+                        self.selectedVideos = fallbackClips
+                        self.isProcessing = false
+                        navigationPath.append(AppScreen.videoEditor)
+                    } else {
+                        self.isProcessing = false
+                        self.errorMessage = error.localizedDescription
+                        self.showErrorAlert = true
+                    }
                 }
             }
         }
