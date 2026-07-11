@@ -235,7 +235,7 @@ struct VideoEditorView: View {
                         ProgressView()
                             .tint(.white)
                     } else {
-                        Image(systemName: "square.and.arrow.down")
+                        Image(systemName: "square.and.arrow.up")
                             .font(.headline)
                     }
                     
