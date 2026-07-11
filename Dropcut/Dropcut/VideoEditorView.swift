@@ -129,39 +129,56 @@ struct VideoEditorView: View {
                                     ForEach(selectedVideos) { video in
                                         TimelineClipView(
                                             video: video,
-                                            isSelected: selectedClip == video,
+                                            isSelected: selectedClip?.id == video.id,
                                             isDragging: draggingClip?.id == video.id,
                                             justDropped: justDroppedClipID == video.id,
                                             showHandle: selectedVideos.count > 1,
-                                            width: CGFloat(video.timelineDuration) * pointsPerSecond
-                                        ) {
-                                            playClip(video)
-                                        }
-                                        .onDrag {
-                                            self.draggingClip = video
-                                            return NSItemProvider(object: video.id.uuidString as NSString)
-                                        }
-                                        .onDrop(of: [.text], delegate: ClipDropDelegate(
-                                            item: video,
-                                            items: $selectedVideos,
-                                            draggedItem: $draggingClip,
-                                            onDropped: { droppedID in
-                                                withAnimation(.easeInOut(duration: 0.15)) {
-                                                    justDroppedClipID = droppedID
-                                                }
-                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                                                    withAnimation(.easeOut(duration: 0.3)) {
-                                                        justDroppedClipID = nil
+                                            width: CGFloat(video.timelineDuration) * pointsPerSecond,
+                                            action: {
+                                                playClip(video)
+                                            },
+                                            onTrimChanged: { newStart, newEnd in
+                                                if let index = selectedVideos.firstIndex(where: { $0.id == video.id }) {
+                                                    selectedVideos[index].startTime = newStart
+                                                    selectedVideos[index].endTime = newEnd
+                                                    
+                                                    // Update the selectedClip copy to match
+                                                    if selectedClip?.id == video.id {
+                                                        selectedClip = selectedVideos[index]
                                                     }
                                                 }
-                                            }
-                                        ))
+                                            },
+                                            onTrimEnded: {
+                                                if let index = selectedVideos.firstIndex(where: { $0.id == video.id }) {
+                                                    playClip(selectedVideos[index])
+                                                }
+                                            },
+                                            onDragProvider: {
+                                                self.draggingClip = video
+                                                return NSItemProvider(object: video.id.uuidString as NSString)
+                                            },
+                                            dropDelegate: ClipDropDelegate(
+                                                item: video,
+                                                items: $selectedVideos,
+                                                draggedItem: $draggingClip,
+                                                onDropped: { droppedID in
+                                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                                        justDroppedClipID = droppedID
+                                                    }
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                                                        withAnimation(.easeOut(duration: 0.3)) {
+                                                            justDroppedClipID = nil
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                        )
                                     }
                                 }
                             }
                         }
                         .padding(.vertical)
-                        .padding(.horizontal, 16) // Prevent clipping of edge text
+                        .padding(.horizontal, 24) // Prevent clipping of edge text
                     }
                 }
             }
@@ -239,7 +256,7 @@ struct VideoEditorView: View {
                             .font(.headline)
                     }
                     
-                    Text(isExporting ? "Combining & Saving..." : "Download Video")
+                    Text(isExporting ? "Combining & Saving..." : "Save to Camera Roll")
                         .font(.headline)
                         .fontWeight(.bold)
                 }
@@ -333,6 +350,12 @@ struct VideoEditorView: View {
     private func playClip(_ clip: VideoClip) {
         activePlayer?.pause()
         activePlayer = nil
+        
+        if selectedClip?.id == clip.id {
+            selectedClip = nil
+            return
+        }
+        
         selectedClip = clip
         
         Task {
@@ -614,7 +637,7 @@ struct TimelineTicksView: View {
                 .frame(maxHeight: .infinity, alignment: .bottom)
             
             // Loop through all seconds up to totalDuration
-            ForEach(0...maxSecond, id: \.self) { second in
+            ForEach(Array(0...maxSecond), id: \.self) { second in
                 let xPosition = CGFloat(second) * pointsPerSecond
                 
                 if second % 2 == 0 {
@@ -658,80 +681,207 @@ struct TimelineClipView: View {
     let showHandle: Bool
     let width: CGFloat
     let action: () -> Void
+    let onTrimChanged: (Double, Double) -> Void
+    let onTrimEnded: () -> Void
+    let onDragProvider: () -> NSItemProvider
+    let dropDelegate: ClipDropDelegate
+    
+    @State private var dragStartLeftTime: Double? = nil
+    @State private var dragStartRightTime: Double? = nil
+    
+    private let pointsPerSecond: CGFloat = 40.0
 
     var body: some View {
-        Button(action: action) {
-            ZStack {
-                // Background
-                if let img = video.thumbnailImage {
-                    let aspect = img.size.height > 0 ? (img.size.width / img.size.height) : 1.6
-                    let scaledWidth = max(10, 44.0 * aspect)
-                    let repeatCount = max(1, Int(ceil(width / scaledWidth)))
-                    
-                    HStack(spacing: 0) {
-                        ForEach(0..<repeatCount, id: \.self) { _ in
-                            Image(uiImage: img)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: scaledWidth, height: 44)
-                                .clipped()
+        ZStack {
+            Button(action: action) {
+                ZStack {
+                    // Background
+                    if let img = video.thumbnailImage {
+                        let aspect = img.size.height > 0 ? (img.size.width / img.size.height) : 1.6
+                        let scaledWidth = max(10, 44.0 * aspect)
+                        let repeatCount = max(1, Int(ceil(width / scaledWidth)))
+                        
+                        HStack(spacing: 0) {
+                            ForEach(0..<repeatCount, id: \.self) { _ in
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: scaledWidth, height: 44)
+                                    .clipped()
+                            }
                         }
-                    }
-                    .frame(width: width, alignment: .leading)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.black.opacity(isSelected ? 0.25 : 0.45))
-                    )
-                } else {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(LinearGradient(
-                                gradient: Gradient(colors: [.accentColor, .purple]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            ))
+                        .frame(width: width, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(isSelected ? 0.25 : 0.0))
+                        )
                     } else {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.secondarySystemBackground))
-                    }
-                }
-
-                HStack(spacing: 5) {
-                    // Drag handle grip — universal iOS drag affordance
-                    if showHandle && width > 60 {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(video.thumbnailImage != nil ? .white.opacity(0.7) : (isSelected ? .white.opacity(0.55) : .secondary.opacity(0.55)))
+                            .fill(isSelected ? Color.accentColor.opacity(0.2) : Color(.secondarySystemBackground))
                     }
 
-                    Image(systemName: "video.fill")
-                        .font(.caption)
-                        .foregroundColor(video.thumbnailImage != nil ? .white : (isSelected ? .white : .primary))
+                    if isSelected {
+                        HStack(spacing: 5) {
+                            // Drag handle grip — universal iOS drag affordance
+                            if showHandle && width > 60 {
+                                Image(systemName: "line.3.horizontal")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
 
-
+                            Image(systemName: "video.fill")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, min(10, width / 10))
+                    }
                 }
-                .padding(.horizontal, min(10, width / 10))
+                .frame(width: width, height: 44)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            justDropped ? Color.green : (isSelected ? Color.accentColor : Color.gray.opacity(0.4)),
+                            lineWidth: justDropped ? 2.5 : 1.5
+                        )
+                )
             }
-            .frame(width: width, height: 44)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        justDropped ? Color.green : (isSelected ? Color.accentColor : Color.clear),
-                        lineWidth: justDropped ? 2.5 : 1.5
-                    )
+            .buttonStyle(ScaleButtonStyle())
+            // Drag-state visual lift: fades and shrinks the dragged card
+            .scaleEffect(isDragging ? 0.91 : 1.0)
+            .opacity(isDragging ? 0.55 : 1.0)
+            .shadow(
+                color: isDragging ? Color.black.opacity(0.28) : .clear,
+                radius: 10, x: 0, y: 6
             )
+            .onDrag(onDragProvider)
+            .onDrop(of: [.text], delegate: dropDelegate)
+            
+            if isSelected {
+                ZStack {
+                    // Left Arrow Handle
+                    HStack {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.accentColor)
+                                .frame(width: 20, height: 44)
+                                .shadow(radius: 2)
+                            
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    if dragStartLeftTime == nil {
+                                        dragStartLeftTime = video.startTime ?? 0.0
+                                    }
+                                    guard let startVal = dragStartLeftTime else { return }
+                                    
+                                    let dx = value.translation.width
+                                    let dt = Double(dx / pointsPerSecond)
+                                    let maxDuration = video.duration ?? 3.75
+                                    let currentEndTime = video.endTime ?? maxDuration
+                                    
+                                    var newStartTime = startVal + dt
+                                    newStartTime = max(0.0, min(newStartTime, currentEndTime - 0.1))
+                                    
+                                    onTrimChanged(newStartTime, currentEndTime)
+                                }
+                                .onEnded { _ in
+                                    dragStartLeftTime = nil
+                                    onTrimEnded()
+                                }
+                        )
+                        Spacer()
+                    }
+                    .offset(x: -20)
+                    
+                    // Right Arrow Handle
+                    HStack {
+                        Spacer()
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.accentColor)
+                                .frame(width: 20, height: 44)
+                                .shadow(radius: 2)
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    let maxDuration = video.duration ?? 3.75
+                                    if dragStartRightTime == nil {
+                                        dragStartRightTime = video.endTime ?? maxDuration
+                                    }
+                                    guard let endVal = dragStartRightTime else { return }
+                                    
+                                    let dx = value.translation.width
+                                    let dt = Double(dx / pointsPerSecond)
+                                    let currentStartTime = video.startTime ?? 0.0
+                                    
+                                    var newEndTime = endVal + dt
+                                    newEndTime = max(currentStartTime + 0.1, min(newEndTime, maxDuration))
+                                    
+                                    onTrimChanged(currentStartTime, newEndTime)
+                                }
+                                .onEnded { _ in
+                                    dragStartRightTime = nil
+                                    onTrimEnded()
+                                }
+                        )
+                    }
+                    .offset(x: 20)
+                    
+                    // Timestamp pills
+                    VStack {
+                        HStack {
+                            Text(formatSeconds(video.startTime ?? 0.0))
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(4)
+                            
+                            Spacer()
+                            
+                            let maxDuration = video.duration ?? 3.75
+                            Text(formatSeconds(video.endTime ?? maxDuration))
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(4)
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.top, 2)
+                        Spacer()
+                    }
+                }
+                .frame(width: width)
+                .allowsHitTesting(true)
+            }
         }
-        .buttonStyle(ScaleButtonStyle())
-        // Drag-state visual lift: fades and shrinks the dragged card
-        .scaleEffect(isDragging ? 0.91 : 1.0)
-        .opacity(isDragging ? 0.55 : 1.0)
-        .shadow(
-            color: isDragging ? Color.black.opacity(0.28) : .clear,
-            radius: 10, x: 0, y: 6
-        )
-        .animation(.spring(response: 0.3, dampingFraction: 0.65), value: isDragging)
-        .animation(.easeInOut(duration: 0.25), value: justDropped)
+        .frame(width: width, height: 44)
+        .zIndex(isSelected ? 1.0 : 0.0)
+    }
+    
+    private func formatSeconds(_ seconds: Double) -> String {
+        let mins = Int(seconds) / 60
+        let secs = seconds.truncatingRemainder(dividingBy: 60)
+        if mins > 0 {
+            return String(format: "%d:%04.1f", mins, secs)
+        } else {
+            return String(format: "%.1fs", secs)
+        }
     }
 }
 
