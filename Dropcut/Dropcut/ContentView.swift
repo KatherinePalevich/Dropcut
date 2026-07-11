@@ -804,7 +804,7 @@ struct ImportClipsView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
                             
-                            Text("Add the raw footages that you'd like Dropcut to edit into a story.")
+                            Text("Add the raw footage you'd like Dropcut to edit into a social media ready short-form video.")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -1460,10 +1460,11 @@ struct VideoPlayerThumbnail: View {
                 }
             }
             
-            // Glassmorphic checkmark badge in top-left when completed
+            // Glassmorphic checkmark badge in top-right when completed
             if !video.isImporting {
                 VStack {
                     HStack {
+                        Spacer()
                         ZStack {
                             Circle()
                                 .fill(.ultraThinMaterial)
@@ -1475,43 +1476,9 @@ struct VideoPlayerThumbnail: View {
                                 .foregroundColor(.green)
                         }
                         .padding(8)
-                        Spacer()
                     }
                     Spacer()
                 }
-            }
-            
-            // Upload Status Overlay in top right corner
-            VStack {
-                HStack {
-                    Spacer()
-                    if video.isUploading {
-                        ProgressView()
-                            .tint(.white)
-                            .scaleEffect(0.7)
-                            .padding(4)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Circle())
-                            .padding(6)
-                    } else if video.geminiFileURI != nil {
-                        Image(systemName: "sparkles")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .padding(4)
-                            .background(LinearGradient(gradient: Gradient(colors: [.purple, .accentColor]), startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .clipShape(Circle())
-                            .padding(6)
-                    } else if video.uploadError != nil {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .padding(4)
-                            .background(Color.red)
-                            .clipShape(Circle())
-                            .padding(6)
-                    }
-                }
-                Spacer()
             }
             
             VStack {
