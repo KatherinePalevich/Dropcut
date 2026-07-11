@@ -100,7 +100,7 @@ struct VideoEditorView: View {
                             .frame(height: 24)
                         
                         Image(systemName: "film")
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.gray)
                             .frame(width: 32, height: 44) // matches TimelineClipView height
                     }
                     .padding(.leading, 12)
@@ -468,6 +468,31 @@ struct VideoEditorView: View {
                         finalClipPaths.append(relativePath)
                         finalClipTitles.append(clip.title)
                         
+                        // Save or generate clip thumbnail
+                        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        let thumbnailRelativePath = relativePath.replacingOccurrences(of: ".mp4", with: ".jpg")
+                        let thumbnailURL = documentsURL.appendingPathComponent(thumbnailRelativePath)
+                        
+                        if let thumbnail = clip.thumbnailImage {
+                            if let data = thumbnail.jpegData(compressionQuality: 0.8) {
+                                try? data.write(to: thumbnailURL)
+                            }
+                        } else {
+                            let asset = AVAsset(url: url)
+                            let generator = AVAssetImageGenerator(asset: asset)
+                            generator.appliesPreferredTrackTransform = true
+                            do {
+                                let time = CMTime(seconds: 0.1, preferredTimescale: 600)
+                                let (cgImage, _) = try await generator.image(at: time)
+                                let uiImage = UIImage(cgImage: cgImage)
+                                if let data = uiImage.jpegData(compressionQuality: 0.8) {
+                                    try? data.write(to: thumbnailURL)
+                                }
+                            } catch {
+                                print("Failed to generate clip thumbnail on save: \(error)")
+                            }
+                        }
+                        
                         let start = clip.startTime ?? 0.0
                         let end: Double
                         if let e = clip.endTime {
@@ -499,6 +524,11 @@ struct VideoEditorView: View {
                                 if !finalClipPaths.contains(oldPath) {
                                     let oldClipURL = documentsURL.appendingPathComponent(oldPath)
                                     try? fileManager.removeItem(at: oldClipURL)
+                                    
+                                    // Also delete old clip thumbnail
+                                    let oldThumbnailPath = oldPath.replacingOccurrences(of: ".mp4", with: ".jpg")
+                                    let oldThumbnailURL = documentsURL.appendingPathComponent(oldThumbnailPath)
+                                    try? fileManager.removeItem(at: oldThumbnailURL)
                                 }
                             }
                             

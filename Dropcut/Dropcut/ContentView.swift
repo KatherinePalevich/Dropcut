@@ -50,7 +50,15 @@ struct ContentView: View {
                                 // Fallback for legacy projects (use combined video as single clip)
                                 let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                                 let url = documentsURL.appendingPathComponent(videoPath)
-                                self.selectedVideos = [VideoClip(url: url, title: project.name)]
+                                
+                                let thumbnailRelativePath = videoPath.replacingOccurrences(of: ".mp4", with: ".jpg")
+                                let thumbnailURL = documentsURL.appendingPathComponent(thumbnailRelativePath)
+                                var thumbnailImage: UIImage? = nil
+                                if let data = try? Data(contentsOf: thumbnailURL) {
+                                    thumbnailImage = UIImage(data: data)
+                                }
+                                
+                                self.selectedVideos = [VideoClip(url: url, title: project.name, thumbnailImage: thumbnailImage)]
                             } else {
                                 // Map saved clips
                                 self.selectedVideos = project.safeClipPaths.indices.map { index in
@@ -60,9 +68,49 @@ struct ContentView: View {
                                     let url = documentsURL.appendingPathComponent(relativePath)
                                     let start = project.safeClipStartTimes.indices.contains(index) ? project.safeClipStartTimes[index] : nil
                                     let end = project.safeClipEndTimes.indices.contains(index) ? project.safeClipEndTimes[index] : nil
-                                    return VideoClip(url: url, title: title, startTime: start, endTime: end)
+                                    
+                                    // Try to load thumbnail from disk
+                                    let thumbnailRelativePath = relativePath.replacingOccurrences(of: ".mp4", with: ".jpg")
+                                    let thumbnailURL = documentsURL.appendingPathComponent(thumbnailRelativePath)
+                                    var thumbnailImage: UIImage? = nil
+                                    if let data = try? Data(contentsOf: thumbnailURL) {
+                                        thumbnailImage = UIImage(data: data)
+                                    }
+                                    
+                                    return VideoClip(url: url, title: title, startTime: start, endTime: end, thumbnailImage: thumbnailImage)
                                 }
                             }
+                            
+                            // Asynchronously generate missing thumbnails if any are nil
+                            let clipsWithIndex = self.selectedVideos.enumerated().filter { $0.element.thumbnailImage == nil }
+                            if !clipsWithIndex.isEmpty {
+                                Task {
+                                    for (index, clip) in clipsWithIndex {
+                                        if let url = clip.url {
+                                            if let generated = await generateThumbnail(for: url) {
+                                                await MainActor.run {
+                                                    // Make sure the index is still valid and corresponds to the same clip
+                                                    if index < self.selectedVideos.count && self.selectedVideos[index].id == clip.id {
+                                                        self.selectedVideos[index].thumbnailImage = generated
+                                                        
+                                                        // Also save this generated thumbnail to disk for future loads!
+                                                        let relativePath = project.safeClipPaths.isEmpty ? project.videoPath : project.safeClipPaths[index]
+                                                        if let relativePath = relativePath {
+                                                            let thumbnailRelativePath = relativePath.replacingOccurrences(of: ".mp4", with: ".jpg")
+                                                            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                                                            let thumbnailURL = documentsURL.appendingPathComponent(thumbnailRelativePath)
+                                                            if let data = generated.jpegData(compressionQuality: 0.8) {
+                                                                try? data.write(to: thumbnailURL)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
                             navigationPath.append(AppScreen.videoEditor)
                         }
                     )

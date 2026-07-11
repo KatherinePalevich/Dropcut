@@ -120,6 +120,11 @@ extension Project {
         for clipPath in project.safeClipPaths {
             let fileURL = documentsURL.appendingPathComponent(clipPath)
             try? fileManager.removeItem(at: fileURL)
+            
+            // Also delete thumbnail
+            let thumbnailPath = clipPath.replacingOccurrences(of: ".mp4", with: ".jpg")
+            let thumbnailURL = documentsURL.appendingPathComponent(thumbnailPath)
+            try? fileManager.removeItem(at: thumbnailURL)
         }
         
         modelContext.delete(project)
