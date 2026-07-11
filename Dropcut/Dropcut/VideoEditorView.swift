@@ -226,7 +226,7 @@ struct VideoEditorView: View {
                     label: {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkles")
-                                .foregroundColor(.purple)
+                                .foregroundColor(.themeSecondary)
                             Text("Gemini Prompt Debug")
                                 .font(.subheadline)
                                 .fontWeight(.bold)
@@ -266,10 +266,10 @@ struct VideoEditorView: View {
                 .background(
                     selectedVideos.isEmpty || isExporting
                         ? AnyView(Color.gray.opacity(0.5))
-                        : AnyView(LinearGradient(gradient: Gradient(colors: [.accentColor, .purple]), startPoint: .leading, endPoint: .trailing))
+                        : AnyView(LinearGradient.themeGradient)
                 )
                 .cornerRadius(16)
-                .shadow(color: !selectedVideos.isEmpty && !isExporting ? .accentColor.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
+                .shadow(color: !selectedVideos.isEmpty && !isExporting ? .themePrimary.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
             }
             .buttonStyle(ScaleButtonStyle())
             .disabled(selectedVideos.isEmpty || isExporting)

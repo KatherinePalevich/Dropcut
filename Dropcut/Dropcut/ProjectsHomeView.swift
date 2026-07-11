@@ -19,6 +19,15 @@ struct ProjectsHomeView: View {
     @State private var projectToPlay: Project? = nil
     @State private var showSettings = false
     
+    // State variables for renaming and deletion
+    @State private var projectToRename: Project? = nil
+    @State private var showRenameAlert = false
+    @State private var renameText = ""
+    
+    @State private var projectToDelete: Project? = nil
+    @State private var showDeleteAlert1 = false
+    @State private var showDeleteAlert2 = false
+    
     // Grid configuration: 2 columns
     let columns = [
         GridItem(.flexible(), spacing: 16),
@@ -41,13 +50,9 @@ struct ProjectsHomeView: View {
                     Image(systemName: "play.rectangle.on.rectangle")
                         .font(.system(size: 80))
                         .foregroundStyle(
-                            LinearGradient(
-                                gradient: Gradient(colors: [.accentColor, .purple]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+                            LinearGradient.themeGradient(startPoint: .topLeading, endPoint: .bottomTrailing)
                         )
-                        .shadow(color: .accentColor.opacity(0.2), radius: 10, x: 0, y: 5)
+                        .shadow(color: .themePrimary.opacity(0.2), radius: 10, x: 0, y: 5)
                     
                     VStack(spacing: 8) {
                         Text("No Projects Yet")
@@ -69,14 +74,10 @@ struct ProjectsHomeView: View {
                             .padding(.vertical, 16)
                             .padding(.horizontal, 32)
                             .background(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [.accentColor, .purple]),
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
+                                LinearGradient.themeGradient
                             )
                             .cornerRadius(16)
-                            .shadow(color: .accentColor.opacity(0.4), radius: 10, x: 0, y: 5)
+                            .shadow(color: .themePrimary.opacity(0.4), radius: 10, x: 0, y: 5)
                     }
                     .buttonStyle(ScaleButtonStyle())
                 }
@@ -92,15 +93,24 @@ struct ProjectsHomeView: View {
                         
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(projects) { project in
-                                ProjectGridCard(project: project, onEdit: {
-                                    editProject(project)
-                                }, onPlay: {
-                                    projectToPlay = project
-                                }, onDelete: {
-                                    withAnimation {
-                                        Project.delete(project, from: modelContext)
+                                ProjectGridCard(
+                                    project: project,
+                                    onEdit: {
+                                        editProject(project)
+                                    },
+                                    onPlay: {
+                                        projectToPlay = project
+                                    },
+                                    onRename: {
+                                        projectToRename = project
+                                        renameText = project.name
+                                        showRenameAlert = true
+                                    },
+                                    onDelete: {
+                                        projectToDelete = project
+                                        showDeleteAlert1 = true
                                     }
-                                })
+                                )
                             }
                         }
                         .padding(.horizontal, 20)
@@ -111,13 +121,9 @@ struct ProjectsHomeView: View {
                     VStack(spacing: 12) {
                         ZStack {
                             Text("Dropcut")
-                                .font(.system(size: 34, weight: .black, design: .rounded))
+                                .font(.themeSerif(size: 34, weight: .bold))
                                 .foregroundStyle(
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [.accentColor, .purple]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
+                                    LinearGradient.themeGradient
                                 )
                             
                             HStack {
@@ -144,14 +150,10 @@ struct ProjectsHomeView: View {
                             .padding(.vertical, 10)
                             .padding(.horizontal, 24)
                             .background(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [.accentColor, .purple]),
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
+                                LinearGradient.themeGradient
                             )
                             .cornerRadius(12)
-                            .shadow(color: .accentColor.opacity(0.3), radius: 6, x: 0, y: 3)
+                            .shadow(color: .themePrimary.opacity(0.3), radius: 6, x: 0, y: 3)
                         }
                         .buttonStyle(ScaleButtonStyle())
                     }
@@ -174,6 +176,42 @@ struct ProjectsHomeView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .alert("Rename Project", isPresented: $showRenameAlert) {
+            TextField("Project Name", text: $renameText)
+            Button("Cancel", role: .cancel) { }
+            Button("Save") {
+                if let project = projectToRename, !renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    project.name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    try? modelContext.save()
+                }
+            }
+        } message: {
+            Text("Enter a new name for your project.")
+        }
+        .alert("Delete Project", isPresented: $showDeleteAlert1) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                showDeleteAlert2 = true
+            }
+        } message: {
+            if let project = projectToDelete {
+                Text("Are you sure you want to delete \"\(project.name)\"?")
+            } else {
+                Text("Are you sure you want to delete this project?")
+            }
+        }
+        .alert("Confirm Deletion", isPresented: $showDeleteAlert2) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete Permanently", role: .destructive) {
+                if let project = projectToDelete {
+                    withAnimation {
+                        Project.delete(project, from: modelContext)
+                    }
+                }
+            }
+        } message: {
+            Text("This action cannot be undone. Are you absolutely sure?")
+        }
     }
 }
 
@@ -182,53 +220,75 @@ struct ProjectGridCard: View {
     let project: Project
     let onEdit: () -> Void
     let onPlay: () -> Void
+    let onRename: () -> Void
     let onDelete: () -> Void
     
     var body: some View {
-        Button(action: onEdit) {
-            VStack(alignment: .leading, spacing: 0) {
-                // Card Media Area
-                ZStack {
-                    if let url = project.videoURL {
-                        VideoThumbnailView(videoURL: url)
-                    } else {
-                        Color.black.opacity(0.1)
-                        Image(systemName: "video.slash")
+        ZStack(alignment: .bottomTrailing) {
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Card Media Area
+                    ZStack {
+                        if let url = project.videoURL {
+                            VideoThumbnailView(videoURL: url)
+                        } else {
+                            Color.black.opacity(0.1)
+                            Image(systemName: "video.slash")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        // Semi-transparent play button overlay
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 36))
+                            .foregroundColor(.white.opacity(0.9))
+                            .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                    }
+                    .aspectRatio(16/9, contentMode: .fit)
+                    .clipped()
+                    
+                    // Details
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(project.name)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .padding(.trailing, 24) // Make room for three-dot menu
+                        
+                        Text(project.timestamp, style: .date)
+                            .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    
-                    // Semi-transparent play button overlay
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 36))
-                        .foregroundColor(.white.opacity(0.9))
-                        .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
                 }
-                .aspectRatio(16/9, contentMode: .fit)
-                .clipped()
-                
-                // Details
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(project.name)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    
-                    Text(project.timestamp, style: .date)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemGroupedBackground))
             }
-            .cornerRadius(16)
-            .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.primary.opacity(0.04), lineWidth: 1)
-            )
+            .buttonStyle(ScaleButtonStyle())
+            
+            // Three-dot menu button overlay
+            Menu {
+                Button(action: onRename) {
+                    Label("Rename Project", systemImage: "pencil")
+                }
+                
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete Project", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 16)
+                    .contentShape(Rectangle())
+            }
         }
-        .buttonStyle(ScaleButtonStyle())
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.primary.opacity(0.04), lineWidth: 1)
+        )
         .contextMenu {
             Button(action: onPlay) {
                 Label("Play Video", systemImage: "play.fill")

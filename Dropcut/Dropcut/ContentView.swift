@@ -213,23 +213,15 @@ struct WelcomeView: View {
                 Image(systemName: "play.rectangle.on.rectangle.fill")
                     .font(.system(size: 80))
                     .foregroundStyle(
-                        LinearGradient(
-                            gradient: Gradient(colors: [.accentColor, .purple, .pink]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                        LinearGradient.themeGradient(startPoint: .topLeading, endPoint: .bottomTrailing)
                     )
-                    .shadow(color: .accentColor.opacity(0.3), radius: 15, x: 0, y: 10)
+                    .shadow(color: .themePrimary.opacity(0.3), radius: 15, x: 0, y: 10)
                 
                 VStack(spacing: 10) {
                     Text("Dropcut")
-                        .font(.system(size: 48, weight: .black, design: .rounded))
+                        .font(.themeSerif(size: 48, weight: .bold))
                         .foregroundStyle(
-                            LinearGradient(
-                                gradient: Gradient(colors: [.accentColor, .purple]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
+                            LinearGradient.themeGradient
                         )
                     
                     Text("AI-Powered Smart Video Editor")
@@ -254,15 +246,9 @@ struct WelcomeView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
-                        .background(
-                            LinearGradient(
-                                gradient: Gradient(colors: [.accentColor, .accentColor.opacity(0.8)]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .background(LinearGradient.themeGradient)
                         .cornerRadius(16)
-                        .shadow(color: .accentColor.opacity(0.4), radius: 10, x: 0, y: 5)
+                        .shadow(color: .themePrimary.opacity(0.4), radius: 10, x: 0, y: 5)
                 }
                 .buttonStyle(ScaleButtonStyle())
                 .padding(.horizontal, 24)
@@ -315,25 +301,17 @@ struct APIKeySetupView: View {
                             ZStack {
                                 Circle()
                                     .fill(
-                                        LinearGradient(
-                                            gradient: Gradient(colors: [.accentColor.opacity(0.15), .purple.opacity(0.1)]),
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
+                                        LinearGradient.themeSoftGradient
                                     )
                                     .frame(width: 100, height: 100)
                                 
                                 Image(systemName: "key.fill")
                                     .font(.system(size: 44))
                                     .foregroundStyle(
-                                        LinearGradient(
-                                            gradient: Gradient(colors: [.accentColor, .purple]),
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
+                                        LinearGradient.themeGradient(startPoint: .topLeading, endPoint: .bottomTrailing)
                                     )
                             }
-                            .shadow(color: .accentColor.opacity(0.2), radius: 12, x: 0, y: 6)
+                            .shadow(color: .themePrimary.opacity(0.2), radius: 12, x: 0, y: 6)
                             
                             VStack(spacing: 8) {
                                 Text("Connect to Gemini AI")
@@ -392,13 +370,7 @@ struct APIKeySetupView: View {
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [Color(red: 0.18, green: 0.46, blue: 1.0), Color(red: 0.4, green: 0.2, blue: 0.9)]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .background(LinearGradient.themeGradient)
                                 .cornerRadius(12)
                             }
                             .padding(.top, 4)
@@ -498,15 +470,11 @@ struct APIKeySetupView: View {
                             .background(
                                 trimmedKey.isEmpty || isValidating
                                     ? AnyView(Color.gray.opacity(0.4))
-                                    : AnyView(LinearGradient(
-                                        gradient: Gradient(colors: [.accentColor, .purple]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                      ))
+                                    : AnyView(LinearGradient.themeGradient)
                             )
                             .cornerRadius(16)
                             .shadow(
-                                color: (!trimmedKey.isEmpty && !isValidating) ? .accentColor.opacity(0.35) : .clear,
+                                color: (!trimmedKey.isEmpty && !isValidating) ? .themePrimary.opacity(0.35) : .clear,
                                 radius: 10, x: 0, y: 5
                             )
                         }
@@ -641,11 +609,11 @@ struct PreferencesView: View {
                     .padding(.vertical, 16)
                     .background(
                         selectedContent != nil
-                            ? AnyView(LinearGradient(gradient: Gradient(colors: [.accentColor, .accentColor.opacity(0.8)]), startPoint: .leading, endPoint: .trailing))
+                            ? AnyView(LinearGradient.themeGradient)
                             : AnyView(Color.gray.opacity(0.5))
                     )
                     .cornerRadius(16)
-                    .shadow(color: selectedContent != nil ? .accentColor.opacity(0.3) : .clear, radius: 8, x: 0, y: 4)
+                    .shadow(color: selectedContent != nil ? .themePrimary.opacity(0.3) : .clear, radius: 8, x: 0, y: 4)
             }
             .buttonStyle(ScaleButtonStyle())
             .disabled(selectedContent == nil)
@@ -800,15 +768,9 @@ struct InstructionsView: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: [.accentColor, .purple]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .background(LinearGradient.themeGradient)
                     .cornerRadius(16)
-                    .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                    .shadow(color: .themePrimary.opacity(0.3), radius: 8, x: 0, y: 4)
             }
             .buttonStyle(ScaleButtonStyle())
             .padding(.horizontal, 20)
@@ -933,10 +895,10 @@ struct ImportClipsView: View {
                     .background(
                         selectedVideos.isEmpty || isProcessing || selectedVideos.contains(where: { $0.isImporting })
                             ? AnyView(Color.gray.opacity(0.5))
-                            : AnyView(LinearGradient(gradient: Gradient(colors: [.accentColor, .purple]), startPoint: .leading, endPoint: .trailing))
+                            : AnyView(LinearGradient.themeGradient)
                     )
                     .cornerRadius(16)
-                    .shadow(color: !selectedVideos.isEmpty && !isProcessing && !selectedVideos.contains(where: { $0.isImporting }) ? .accentColor.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
+                    .shadow(color: !selectedVideos.isEmpty && !isProcessing && !selectedVideos.contains(where: { $0.isImporting }) ? .themePrimary.opacity(0.4) : .clear, radius: 10, x: 0, y: 5)
                 }
                 .buttonStyle(ScaleButtonStyle())
                 .disabled(selectedVideos.isEmpty || isProcessing || selectedVideos.contains(where: { $0.isImporting }))

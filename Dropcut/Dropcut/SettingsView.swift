@@ -33,13 +33,9 @@ struct SettingsView: View {
                         Image(systemName: "key.fill")
                             .font(.system(size: 48))
                             .foregroundStyle(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [.accentColor, .purple]),
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
+                                LinearGradient.themeGradient(startPoint: .topLeading, endPoint: .bottomTrailing)
                             )
-                            .shadow(color: .accentColor.opacity(0.2), radius: 10, x: 0, y: 5)
+                            .shadow(color: .themePrimary.opacity(0.2), radius: 10, x: 0, y: 5)
                             .padding(.top, 20)
 
                         Text("Gemini API Configuration")
@@ -157,10 +153,10 @@ struct SettingsView: View {
                         .background(
                             showSaveConfirmation
                                 ? AnyView(Color.green)
-                                : AnyView(LinearGradient(gradient: Gradient(colors: [.accentColor, .purple]), startPoint: .leading, endPoint: .trailing))
+                                : AnyView(LinearGradient.themeGradient)
                         )
                         .cornerRadius(16)
-                        .shadow(color: showSaveConfirmation ? .green.opacity(0.3) : .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                        .shadow(color: showSaveConfirmation ? .green.opacity(0.3) : .themePrimary.opacity(0.3), radius: 8, x: 0, y: 4)
                     }
                     .buttonStyle(ScaleButtonStyle())
                     .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValidating || showSaveConfirmation)
