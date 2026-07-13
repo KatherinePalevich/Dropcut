@@ -833,6 +833,15 @@ struct ImportClipsView: View {
                                     ProgressView()
                                         .padding(.trailing, 8)
                                 }
+                                
+                                Text("\(selectedVideos.count)/10 clips")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(selectedVideos.count >= 10 ? .red : .secondary)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(selectedVideos.count >= 10 ? Color.red.opacity(0.1) : Color.secondary.opacity(0.1))
+                                    .cornerRadius(8)
                             }
                             .padding(.horizontal, 20)
                             
@@ -843,29 +852,29 @@ struct ImportClipsView: View {
                                 // Add button inside grid
                                 PhotosPicker(
                                     selection: $pickerItems,
-                                    maxSelectionCount: 10,
+                                    maxSelectionCount: max(0, 10 - selectedVideos.count),
                                     matching: .videos,
                                     photoLibrary: .shared()
                                 ) {
                                     VStack(spacing: 8) {
-                                        Image(systemName: "video.badge.plus")
+                                        Image(systemName: selectedVideos.count >= 10 ? "video.slash" : "video.badge.plus")
                                             .font(.system(size: 28))
-                                            .foregroundColor(.accentColor)
-                                        Text("Import Video")
+                                            .foregroundColor(selectedVideos.count >= 10 ? .secondary : .accentColor)
+                                        Text(selectedVideos.count >= 10 ? "Limit Reached" : "Import Video")
                                             .font(.caption)
                                             .fontWeight(.bold)
-                                            .foregroundColor(.accentColor)
+                                            .foregroundColor(selectedVideos.count >= 10 ? .secondary : .accentColor)
                                     }
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 120)
-                                    .background(Color.accentColor.opacity(0.08))
+                                    .background(selectedVideos.count >= 10 ? Color.secondary.opacity(0.08) : Color.accentColor.opacity(0.08))
                                     .cornerRadius(16)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 16)
-                                            .stroke(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                                            .stroke(selectedVideos.count >= 10 ? Color.secondary.opacity(0.3) : Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
                                     )
                                 }
-                                .disabled(isProcessing)
+                                .disabled(isProcessing || selectedVideos.count >= 10)
                                 
                                 ForEach(selectedVideos) { video in
                                     VideoPlayerThumbnail(video: video)
@@ -909,8 +918,17 @@ struct ImportClipsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: pickerItems) { _, newItems in
                 if newItems.isEmpty { return }
-                isLoading = true
                 let currentCount = selectedVideos.count
+                let remainingSlots = max(0, 10 - currentCount)
+                let itemsToImport = Array(newItems.prefix(remainingSlots))
+                guard !itemsToImport.isEmpty else {
+                    pickerItems = []
+                    return
+                }
+                isLoading = true
+                // Reset the picker binding immediately so users can open the picker
+                // again while this batch is still importing in the background.
+                pickerItems = []
                 Task {
                     // 1. Check and request readWrite authorization
                     let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
@@ -918,7 +936,7 @@ struct ImportClipsView: View {
                     
                     // 2. Immediately create placeholder clips on the main thread (without blocking on thumbnails)
                     var tempClips: [VideoClip] = []
-                    for index in 0..<newItems.count {
+                    for index in 0..<itemsToImport.count {
                         let clipNum = currentCount + index + 1
                         let clip = VideoClip(
                             url: nil,
@@ -935,7 +953,7 @@ struct ImportClipsView: View {
                     
                     // 3. Import each video concurrently and update elements individually
                     await withTaskGroup(of: Void.self) { group in
-                        for (index, item) in newItems.enumerated() {
+                        for (index, item) in itemsToImport.enumerated() {
                             let targetClipId = tempClips[index].id
                             let localID = item.itemIdentifier
                             
@@ -976,6 +994,8 @@ struct ImportClipsView: View {
                                             selectedVideos[idx].thumbnailImage = resultThumbnail
                                             selectedVideos[idx].duration = duration
                                         }
+                                        // Kick off background upload for this clip as soon as it's ready
+                                        startBackgroundUploads()
                                     }
                                 } catch {
                                     print("Failed to import video: \(error)")
@@ -989,8 +1009,6 @@ struct ImportClipsView: View {
                     }
                     
                     await MainActor.run {
-                        pickerItems = []
-                        startBackgroundUploads()
                         isLoading = false
                     }
                 }
