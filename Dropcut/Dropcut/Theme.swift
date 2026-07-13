@@ -8,14 +8,14 @@
 import SwiftUI
 
 extension Color {
-    /// Safelight Crimson Red - represents darkroom safelight illumination
-    static let themePrimary = Color(red: 0.73, green: 0.11, blue: 0.11)
+    /// Safelight Crimson Red - represents darkroom safelight illumination (vibrant, slightly desaturated)
+    static let themePrimary = Color(red: 0.73, green: 0.23, blue: 0.23)
     
-    /// Chemical Amber Gold - represents photographic development chemicals
-    static let themeSecondary = Color(red: 0.85, green: 0.47, blue: 0.02)
+    /// Chemical Amber Gold - represents photographic development chemicals (vibrant, slightly desaturated)
+    static let themeSecondary = Color(red: 0.85, green: 0.57, blue: 0.24)
     
-    /// Accent safelight glow
-    static let themeAccent = Color(red: 0.95, green: 0.60, blue: 0.10)
+    /// Accent safelight glow (vibrant, slightly desaturated)
+    static let themeAccent = Color(red: 0.95, green: 0.68, blue: 0.30)
 }
 
 extension LinearGradient {
