@@ -1135,6 +1135,7 @@ struct ImportClipsView: View {
             selectedVideos[index].isUploading = false
         }
         
+        var animationTask: Task<Void, Never>? = nil
         Task {
             do {
                 // A. Query duration of each clip concurrently to construct a clear prompt
@@ -1158,7 +1159,7 @@ struct ImportClipsView: View {
                 // B. Upload files sequentially to Gemini File API (using cache)
                 let totalCount = originalClipsWithDurations.count
                 await MainActor.run {
-                    processingStep = "Uploading and processing clips (0/\(totalCount))..."
+                    processingStep = "Analyzing clip 1 of \(totalCount)"
                 }
                 
                 var uploadedFileURIs = [String]()
@@ -1190,14 +1191,29 @@ struct ImportClipsView: View {
                     
                     uploadedFileURIs.append(activeURI)
                     let completedCount = index + 1
+                    let nextClip = completedCount + 1
                     await MainActor.run {
-                        processingStep = "Uploading and processing clips (\(completedCount)/\(totalCount))..."
+                        if nextClip <= totalCount {
+                            processingStep = "Analyzing clip \(nextClip) of \(totalCount)"
+                        }
                     }
                 }
                 
                 // C. Construct the prompt and system instructions
                 await MainActor.run {
-                    processingStep = "Analyzing clips with Gemini..."
+                    processingStep = "Putting everything together..."
+                }
+                
+                // Animate between "Putting everything together..." and "Almost ready..."
+                animationTask = Task {
+                    var toggle = false
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 1_800_000_000)
+                        if Task.isCancelled { break }
+                        toggle.toggle()
+                        let msg = toggle ? "Almost ready..." : "Putting everything together..."
+                        await MainActor.run { processingStep = msg }
+                    }
                 }
                 
                 let contentEditingType = selectedContent ?? "General"
@@ -1227,6 +1243,7 @@ struct ImportClipsView: View {
                 
                 // D. Call Gemini GenerateContent REST API with system instructions
                 let jsonResponseText = try await GeminiService.generateContent(apiKey: resolvedApiKey, fileURIs: uploadedFileURIs, promptText: promptText, systemInstruction: systemInstruction)
+                animationTask?.cancel()
                 
                 // E. Parse JSON Response
                 guard let jsonData = jsonResponseText.data(using: .utf8) else {
@@ -1273,6 +1290,7 @@ struct ImportClipsView: View {
                 }
                 
             } catch {
+                animationTask?.cancel()
                 await MainActor.run {
                     var fallbackClips: [VideoClip] = []
                     for clip in selectedVideos {
