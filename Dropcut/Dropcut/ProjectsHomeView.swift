@@ -231,17 +231,32 @@ struct ProjectGridCard: View {
                     ZStack {
                         if let url = project.videoURL {
                             VideoThumbnailView(videoURL: url)
+                        } else if let firstClipPath = project.safeClipPaths.first {
+                            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                            let thumbnailRelativePath = firstClipPath.replacingOccurrences(of: ".mp4", with: ".jpg")
+                            let thumbnailURL = documentsURL.appendingPathComponent(thumbnailRelativePath)
+                            
+                            if let imgData = try? Data(contentsOf: thumbnailURL), let uiImage = UIImage(data: imgData) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            } else {
+                                let clipURL = documentsURL.appendingPathComponent(firstClipPath)
+                                VideoThumbnailView(videoURL: clipURL)
+                            }
                         } else {
                             Color.black.opacity(0.1)
                             Image(systemName: "video.slash")
                                 .foregroundColor(.secondary)
                         }
                         
-                        // Semi-transparent play button overlay
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 36))
-                            .foregroundColor(.white.opacity(0.9))
-                            .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                        // Play button overlay — shown for all projects with video content
+                        if project.videoURL != nil || !project.safeClipPaths.isEmpty {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 36))
+                                .foregroundColor(.white.opacity(0.9))
+                                .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                        }
                     }
                     .aspectRatio(16/9, contentMode: .fit)
                     .clipped()
@@ -290,8 +305,10 @@ struct ProjectGridCard: View {
                 .stroke(Color.primary.opacity(0.04), lineWidth: 1)
         )
         .contextMenu {
-            Button(action: onPlay) {
-                Label("Play Video", systemImage: "play.fill")
+            if project.videoURL != nil {
+                Button(action: onPlay) {
+                    Label("Play Video", systemImage: "play.fill")
+                }
             }
             
             if let videoURL = project.videoURL {

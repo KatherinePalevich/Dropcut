@@ -30,6 +30,7 @@ struct ContentView: View {
     
     // Import clips screen state
     @State private var selectedVideos: [VideoClip] = []
+    @State private var editorClips: [VideoClip] = []
     @State private var editingProject: Project? = nil
 
     
@@ -58,10 +59,10 @@ struct ContentView: View {
                                     thumbnailImage = UIImage(data: data)
                                 }
                                 
-                                self.selectedVideos = [VideoClip(url: url, title: project.name, thumbnailImage: thumbnailImage)]
+                                self.editorClips = [VideoClip(url: url, title: project.name, thumbnailImage: thumbnailImage)]
                             } else {
                                 // Map saved clips
-                                self.selectedVideos = project.safeClipPaths.indices.map { index in
+                                self.editorClips = project.safeClipPaths.indices.map { index in
                                     let relativePath = project.safeClipPaths[index]
                                     let title = project.safeClipTitles[index]
                                     let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -82,7 +83,7 @@ struct ContentView: View {
                             }
                             
                             // Asynchronously generate missing thumbnails if any are nil
-                            let clipsWithIndex = self.selectedVideos.enumerated().filter { $0.element.thumbnailImage == nil }
+                            let clipsWithIndex = self.editorClips.enumerated().filter { $0.element.thumbnailImage == nil }
                             if !clipsWithIndex.isEmpty {
                                 Task {
                                     for (index, clip) in clipsWithIndex {
@@ -90,8 +91,8 @@ struct ContentView: View {
                                             if let generated = await generateThumbnail(for: url) {
                                                 await MainActor.run {
                                                     // Make sure the index is still valid and corresponds to the same clip
-                                                    if index < self.selectedVideos.count && self.selectedVideos[index].id == clip.id {
-                                                        self.selectedVideos[index].thumbnailImage = generated
+                                                    if index < self.editorClips.count && self.editorClips[index].id == clip.id {
+                                                        self.editorClips[index].thumbnailImage = generated
                                                         
                                                         // Also save this generated thumbnail to disk for future loads!
                                                         let relativePath = project.safeClipPaths.isEmpty ? project.videoPath : project.safeClipPaths[index]
@@ -132,10 +133,11 @@ struct ContentView: View {
                         selectedContent: $selectedContent,
                         instructionsText: $customInstructions
                     )
-                case .importClips:
+                 case .importClips:
                     ImportClipsView(
                         navigationPath: $navigationPath,
                         selectedVideos: $selectedVideos,
+                        editorClips: $editorClips,
                         selectedContent: $selectedContent,
                         durationSeconds: $durationSeconds,
                         customInstructions: $customInstructions,
@@ -144,23 +146,34 @@ struct ContentView: View {
                 case .videoEditor:
                     VideoEditorView(
                         navigationPath: $navigationPath,
-                        selectedVideos: $selectedVideos,
+                        selectedVideos: $editorClips,
                         editingProject: $editingProject,
                         customInstructions: $customInstructions,
-                        geminiPrompt: $geminiPrompt
+                        geminiPrompt: $geminiPrompt,
+                        isEditingExistingProject: editingProject != nil
                     )
                 }
             }
         }
+        .onChange(of: navigationPath) { _, newValue in
+            if newValue.isEmpty {
+                resetState()
+            }
+        }
     }
     
-    private func startNewProject() {
+    private func resetState() {
         selectedContent = nil
         durationSeconds = 15
         customInstructions = ""
         geminiPrompt = ""
         selectedVideos = []
+        editorClips = []
         editingProject = nil
+    }
+    
+    private func startNewProject() {
+        resetState()
         navigationPath = NavigationPath()
         navigationPath.append(AppScreen.preferences)
     }
@@ -785,6 +798,7 @@ struct InstructionsView: View {
 struct ImportClipsView: View {
     @Binding var navigationPath: NavigationPath
     @Binding var selectedVideos: [VideoClip]
+    @Binding var editorClips: [VideoClip]
     
     @Binding var selectedContent: String?
     @Binding var durationSeconds: Int
@@ -1284,7 +1298,7 @@ struct ImportClipsView: View {
                 // G. Complete processing and navigate
                 await MainActor.run {
                     self.geminiPrompt = promptText
-                    self.selectedVideos = cutClips
+                    self.editorClips = cutClips
                     self.isProcessing = false
                     navigationPath.append(AppScreen.videoEditor)
                 }
@@ -1308,7 +1322,7 @@ struct ImportClipsView: View {
                     }
                     
                     if !fallbackClips.isEmpty {
-                        self.selectedVideos = fallbackClips
+                        self.editorClips = fallbackClips
                         self.isProcessing = false
                         navigationPath.append(AppScreen.videoEditor)
                     } else {

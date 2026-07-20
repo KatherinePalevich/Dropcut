@@ -99,11 +99,7 @@ extension Project {
         let fileName = "clip_\(UUID().uuidString).mp4"
         let destinationURL = documentsURL.appendingPathComponent(fileName)
         
-        do {
-            try fileManager.moveItem(at: url, to: destinationURL)
-        } catch {
-            try fileManager.copyItem(at: url, to: destinationURL)
-        }
+        try fileManager.copyItem(at: url, to: destinationURL)
         return fileName
     }
     
