@@ -25,6 +25,8 @@ struct VideoEditorView: View {
     @State private var selectedClip: VideoClip? = nil
     @State private var draggingClip: VideoClip? = nil
     @State private var justDroppedClipID: UUID? = nil
+    @State private var currentTime: Double = 0.0
+    @State private var timeObserverToken: Any? = nil
     
     @State private var isExporting = false
     @State private var showAlert = false
@@ -87,13 +89,10 @@ struct VideoEditorView: View {
                 .cornerRadius(12)
                 .padding()
                 .onAppear {
-                    if let first = selectedVideos.first {
-                        playClip(first)
-                    }
+                    setupFullPlayback()
                 }
                 .onDisappear {
-                    activePlayer?.pause()
-                    activePlayer = nil
+                    cleanupPlayer()
                 }
                 
                 // Timeline Area
@@ -145,59 +144,79 @@ struct VideoEditorView: View {
                                                 .foregroundColor(.secondary)
                                         )
                                 } else {
-                                    // Tick marks timeline ruler
-                                    TimelineTicksView(totalDuration: totalDuration, pointsPerSecond: pointsPerSecond)
-                                    
-                                    // Video clips row
-                                    HStack(spacing: 0) {
-                                        ForEach(selectedVideos) { video in
-                                            TimelineClipView(
-                                                video: video,
-                                                isSelected: selectedClip?.id == video.id,
-                                                isDragging: draggingClip?.id == video.id,
-                                                justDropped: justDroppedClipID == video.id,
-                                                showHandle: selectedVideos.count > 1,
-                                                width: CGFloat(video.timelineDuration) * pointsPerSecond,
-                                                action: {
-                                                    playClip(video)
-                                                },
-                                                onTrimChanged: { newStart, newEnd in
-                                                    if let index = selectedVideos.firstIndex(where: { $0.id == video.id }) {
-                                                        selectedVideos[index].startTime = newStart
-                                                        selectedVideos[index].endTime = newEnd
-                                                        
-                                                        // Update the selectedClip copy to match
-                                                        if selectedClip?.id == video.id {
-                                                            selectedClip = selectedVideos[index]
-                                                        }
-                                                    }
-                                                },
-                                                onTrimEnded: {
-                                                    if let index = selectedVideos.firstIndex(where: { $0.id == video.id }) {
-                                                        playClip(selectedVideos[index])
-                                                    }
-                                                },
-                                                onDragProvider: {
-                                                    self.draggingClip = video
-                                                    return NSItemProvider(object: video.id.uuidString as NSString)
-                                                },
-                                                dropDelegate: ClipDropDelegate(
-                                                    item: video,
-                                                    items: $selectedVideos,
-                                                    draggedItem: $draggingClip,
-                                                    onDropped: { droppedID in
-                                                        withAnimation(.easeInOut(duration: 0.15)) {
-                                                            justDroppedClipID = droppedID
-                                                        }
-                                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                                                            withAnimation(.easeOut(duration: 0.3)) {
-                                                                justDroppedClipID = nil
+                                    ZStack(alignment: .topLeading) {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            // Tick marks timeline ruler
+                                            TimelineTicksView(totalDuration: totalDuration, pointsPerSecond: pointsPerSecond)
+                                            
+                                            // Video clips row
+                                            HStack(spacing: 0) {
+                                                ForEach(selectedVideos) { video in
+                                                    TimelineClipView(
+                                                        video: video,
+                                                        isSelected: selectedClip?.id == video.id,
+                                                        isDragging: draggingClip?.id == video.id,
+                                                        justDropped: justDroppedClipID == video.id,
+                                                        showHandle: selectedVideos.count > 1,
+                                                        width: CGFloat(video.timelineDuration) * pointsPerSecond,
+                                                        action: {
+                                                            seekToClip(video)
+                                                        },
+                                                        onTrimChanged: { newStart, newEnd in
+                                                            if let index = selectedVideos.firstIndex(where: { $0.id == video.id }) {
+                                                                selectedVideos[index].startTime = newStart
+                                                                selectedVideos[index].endTime = newEnd
+                                                                
+                                                                if selectedClip?.id == video.id {
+                                                                    selectedClip = selectedVideos[index]
+                                                                }
                                                             }
-                                                        }
-                                                    }
-                                                )
-                                            )
+                                                        },
+                                                        onTrimEnded: {
+                                                            setupFullPlayback(seekToTime: currentTime)
+                                                        },
+                                                        onDragProvider: {
+                                                            self.draggingClip = video
+                                                            return NSItemProvider(object: video.id.uuidString as NSString)
+                                                        },
+                                                        dropDelegate: ClipDropDelegate(
+                                                            item: video,
+                                                            items: $selectedVideos,
+                                                            draggedItem: $draggingClip,
+                                                            onDropped: { droppedID in
+                                                                withAnimation(.easeInOut(duration: 0.15)) {
+                                                                    justDroppedClipID = droppedID
+                                                                }
+                                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                                                                    withAnimation(.easeOut(duration: 0.3)) {
+                                                                        justDroppedClipID = nil
+                                                                    }
+                                                                }
+                                                                setupFullPlayback(seekToTime: 0.0)
+                                                            }
+                                                        )
+                                                    )
+                                                }
+                                            }
                                         }
+                                        
+                                        // Playhead / Progress Bar aligned with seconds and clips
+                                        let totalWidth = CGFloat(totalDuration) * pointsPerSecond
+                                        let rawPlayheadX = CGFloat(currentTime) * pointsPerSecond
+                                        let clampedPlayheadX = max(0, min(rawPlayheadX, totalWidth))
+                                        
+                                        VStack(spacing: 0) {
+                                            Capsule()
+                                                .fill(Color.red)
+                                                .frame(width: 10, height: 12)
+                                                .shadow(color: .red.opacity(0.5), radius: 3, x: 0, y: 1)
+                                            
+                                            Rectangle()
+                                                .fill(Color.red)
+                                                .frame(width: 2, height: 60)
+                                        }
+                                        .offset(x: clampedPlayheadX - 5)
+                                        .allowsHitTesting(false)
                                     }
                                 }
                             }
@@ -376,79 +395,142 @@ struct VideoEditorView: View {
         }
     }
     
-    private func createPlayer(for clip: VideoClip) async -> AVPlayer? {
-        guard let url = clip.url else { return nil }
-        let asset = AVAsset(url: url)
+    private func createFullCompositionPlayer(clips: [VideoClip]) async -> (AVPlayer, Double)? {
+        guard !clips.isEmpty else { return nil }
+        let composition = AVMutableComposition()
         
-        let start = clip.startTime ?? 0.0
-        let end: Double
-        if let e = clip.endTime {
-            end = e
-        } else {
-            let duration = (try? await asset.load(.duration)) ?? .zero
-            end = duration.seconds
+        guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let audioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            return nil
         }
         
-        let composition = AVMutableComposition()
-        if let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+        var currentTime = CMTime.zero
+        var isFirst = true
+        
+        for clip in clips {
+            guard let url = clip.url else { continue }
+            let asset = AVAsset(url: url)
+            
+            let videoTracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+            guard let assetVideoTrack = videoTracks.first else { continue }
+            
+            if isFirst {
+                let transform = (try? await assetVideoTrack.load(.preferredTransform)) ?? .identity
+                videoTrack.preferredTransform = transform
+                isFirst = false
+            }
+            
+            let dur = (try? await asset.load(.duration))?.seconds ?? 0.0
+            let start = clip.startTime ?? 0.0
+            let end = clip.endTime ?? dur
+            let clipDuration = max(0.1, end - start)
+            
+            let startCM = CMTime(seconds: start, preferredTimescale: 600)
+            let durationCM = CMTime(seconds: clipDuration, preferredTimescale: 600)
+            let timeRange = CMTimeRange(start: startCM, duration: durationCM)
+            
             do {
-                let videoTracks = try await asset.loadTracks(withMediaType: .video)
-                if let firstVideo = videoTracks.first {
-                    let transform = try? await firstVideo.load(.preferredTransform)
-                    videoTrack.preferredTransform = transform ?? .identity
-                    let startCM = CMTime(seconds: start, preferredTimescale: 600)
-                    let durationCM = CMTime(seconds: max(0.1, end - start), preferredTimescale: 600)
-                    try videoTrack.insertTimeRange(CMTimeRange(start: startCM, duration: durationCM), of: firstVideo, at: .zero)
+                try videoTrack.insertTimeRange(timeRange, of: assetVideoTrack, at: currentTime)
+                
+                let audioTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
+                if let assetAudioTrack = audioTracks.first {
+                    try audioTrack.insertTimeRange(timeRange, of: assetAudioTrack, at: currentTime)
                 }
                 
-                // Add optional audio track if present
-                let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-                if let firstAudio = audioTracks.first,
-                   let audioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                    let startCM = CMTime(seconds: start, preferredTimescale: 600)
-                    let durationCM = CMTime(seconds: max(0.1, end - start), preferredTimescale: 600)
-                    try audioTrack.insertTimeRange(CMTimeRange(start: startCM, duration: durationCM), of: firstAudio, at: .zero)
-                }
-                
-                let playerItem = AVPlayerItem(asset: composition)
-                return AVPlayer(playerItem: playerItem)
+                currentTime = CMTimeAdd(currentTime, durationCM)
             } catch {
-                print("Failed to build preview composition: \(error)")
+                print("Failed to insert clip track into composition: \(error)")
             }
         }
         
-        // Fallback
-        return AVPlayer(url: url)
+        guard currentTime.seconds > 0 else { return nil }
+        
+        let playerItem = AVPlayerItem(asset: composition)
+        let player = AVPlayer(playerItem: playerItem)
+        return (player, currentTime.seconds)
     }
     
-    private func playClip(_ clip: VideoClip) {
-        activePlayer?.pause()
-        activePlayer = nil
+    private func setupFullPlayback(seekToTime: Double? = nil) {
+        cleanupPlayer()
         
-        if selectedClip?.id == clip.id {
-            selectedClip = nil
-            return
-        }
-        
-        selectedClip = clip
+        guard !selectedVideos.isEmpty else { return }
+        let clipsToPlay = selectedVideos
         
         Task {
-            guard let player = await createPlayer(for: clip) else { return }
-            guard selectedClip?.id == clip.id else { return } // Avoid race if user tapped another clip quickly
-            
-            NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: player.currentItem,
-                queue: .main
-            ) { _ in
-                player.seek(to: .zero)
-                player.play()
-            }
+            guard let (player, _) = await createFullCompositionPlayer(clips: clipsToPlay) else { return }
             
             await MainActor.run {
                 self.activePlayer = player
+                
+                if let seekToTime = seekToTime {
+                    let clamped = max(0.0, min(seekToTime, self.totalDuration))
+                    let cm = CMTime(seconds: clamped, preferredTimescale: 600)
+                    player.seek(to: cm, toleranceBefore: .zero, toleranceAfter: .zero)
+                    self.currentTime = clamped
+                }
+                
+                let interval = CMTime(value: 1, timescale: 30)
+                self.timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
+                    guard player == self.activePlayer else { return }
+                    let secs = time.seconds
+                    if secs.isFinite && !secs.isNaN {
+                        self.currentTime = secs
+                        self.updateSelectedClipForCurrentTime(secs)
+                    }
+                }
+                
+                NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: player.currentItem,
+                    queue: .main
+                ) { _ in
+                    player.seek(to: .zero)
+                    player.play()
+                }
+                
                 player.play()
             }
+        }
+    }
+    
+    private func cleanupPlayer() {
+        if let token = timeObserverToken {
+            activePlayer?.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
+        activePlayer?.pause()
+        activePlayer = nil
+    }
+    
+    private func updateSelectedClipForCurrentTime(_ time: Double) {
+        var accumulated: Double = 0.0
+        for clip in selectedVideos {
+            let dur = clip.timelineDuration
+            if time >= accumulated && time <= accumulated + dur + 0.05 {
+                if selectedClip?.id != clip.id {
+                    selectedClip = clip
+                }
+                return
+            }
+            accumulated += dur
+        }
+    }
+    
+    private func seekToClip(_ clip: VideoClip) {
+        var accumulated: Double = 0.0
+        for item in selectedVideos {
+            if item.id == clip.id {
+                selectedClip = clip
+                let cm = CMTime(seconds: accumulated, preferredTimescale: 600)
+                if let player = activePlayer {
+                    player.seek(to: cm, toleranceBefore: .zero, toleranceAfter: .zero)
+                    self.currentTime = accumulated
+                } else {
+                    setupFullPlayback(seekToTime: accumulated)
+                }
+                return
+            }
+            accumulated += item.timelineDuration
         }
     }
     
