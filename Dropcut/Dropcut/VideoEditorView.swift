@@ -37,6 +37,7 @@ struct VideoEditorView: View {
     
     /// Snapshot of clips as loaded — used to detect unsaved changes when exiting an existing project.
     @State private var originalClipSnapshot: [ClipSnapshot] = []
+    @State private var originalVideos: [VideoClip] = []
     
     private let pointsPerSecond: CGFloat = 40.0
     
@@ -55,7 +56,7 @@ struct VideoEditorView: View {
         selectedVideos.map { ClipSnapshot(id: $0.id, startTime: $0.startTime, endTime: $0.endTime) }
     }
     
-    private var hasUnsavedChanges: Bool {
+    private var hasUserMadeChanges: Bool {
         currentClipSnapshot != originalClipSnapshot
     }
     
@@ -328,17 +329,9 @@ struct VideoEditorView: View {
                 Button(action: {
                     handleExitTapped()
                 }) {
-                    if isEditingExistingProject {
-                        Image(systemName: "xmark")
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                    } else {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .fontWeight(.semibold)
-                            Text("Back")
-                        }
-                    }
+                    Image(systemName: "xmark")
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
                 }
                 .disabled(isExporting || isSavingProgress)
             }
@@ -347,14 +340,14 @@ struct VideoEditorView: View {
             // Snapshot the clips as they were when the editor opened, so we can
             // detect changes accurately when the user taps the X button.
             originalClipSnapshot = currentClipSnapshot
+            originalVideos = selectedVideos
         }
         .confirmationDialog("Save Changes?", isPresented: $showExitDialog, titleVisibility: .visible) {
             Button("Save Progress") {
                 saveProjectProgress()
             }
             Button("Discard Edits", role: .destructive) {
-                editingProject = nil
-                navigationPath = NavigationPath()
+                discardEditsAndExit()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
@@ -820,18 +813,25 @@ struct VideoEditorView: View {
     }
     
     private func handleExitTapped() {
-        if isEditingExistingProject {
-            // Only prompt if the user actually changed something
-            if hasUnsavedChanges {
-                showExitDialog = true
-            } else {
-                // Nothing changed — exit silently
+        if hasUserMadeChanges {
+            showExitDialog = true
+        } else {
+            if isEditingExistingProject {
                 editingProject = nil
                 navigationPath = NavigationPath()
+            } else {
+                saveProjectProgress()
             }
+        }
+    }
+    
+    private func discardEditsAndExit() {
+        if isEditingExistingProject {
+            editingProject = nil
+            navigationPath = NavigationPath()
         } else {
-            // New project flow: always ask before leaving
-            showExitDialog = true
+            selectedVideos = originalVideos
+            saveProjectProgress()
         }
     }
 }
