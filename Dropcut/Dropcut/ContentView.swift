@@ -1032,10 +1032,13 @@ struct ImportClipsView: View {
             } message: {
                 Text("Please configure your Gemini API Key first by tapping the gear icon on the home screen.")
             }
-            .alert("Gemini Failed", isPresented: $showErrorAlert) {
-                Button("OK") { }
+            .alert("Dropcut Couldn’t Finish", isPresented: $showErrorAlert) {
+                Button("Try Again") {
+                    runDropcutPipeline()
+                }
+                Button("Cancel", role: .cancel) { }
             } message: {
-                Text(errorMessage)
+                Text("\(errorMessage)\n\nYour imported clips were not changed.")
             }
             
             // Modern Glassmorphic Progress Overlay
@@ -1305,31 +1308,18 @@ struct ImportClipsView: View {
                 
             } catch {
                 animationTask?.cancel()
+
+                if error is CancellationError {
+                    await MainActor.run {
+                        self.isProcessing = false
+                    }
+                    return
+                }
+
                 await MainActor.run {
-                    var fallbackClips: [VideoClip] = []
-                    for clip in selectedVideos {
-                        let dur = clip.duration ?? 5.0
-                        let newClip = VideoClip(
-                            url: clip.url,
-                            title: clip.title,
-                            geminiFileURI: clip.geminiFileURI,
-                            startTime: 0.0,
-                            endTime: dur,
-                            thumbnailImage: clip.thumbnailImage,
-                            duration: dur
-                        )
-                        fallbackClips.append(newClip)
-                    }
-                    
-                    if !fallbackClips.isEmpty {
-                        self.editorClips = fallbackClips
-                        self.isProcessing = false
-                        navigationPath.append(AppScreen.videoEditor)
-                    } else {
-                        self.isProcessing = false
-                        self.errorMessage = error.localizedDescription
-                        self.showErrorAlert = true
-                    }
+                    self.isProcessing = false
+                    self.errorMessage = error.localizedDescription
+                    self.showErrorAlert = true
                 }
             }
         }
@@ -1722,4 +1712,3 @@ struct VideoTransferable: Transferable {
         }
     }
 }
-
