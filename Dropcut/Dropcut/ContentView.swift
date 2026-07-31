@@ -1234,29 +1234,53 @@ struct ImportClipsView: View {
                 }
                 
                 let contentEditingType = selectedContent ?? "General"
-                let videoLength = "\(durationSeconds)"
-                
-                let systemInstruction = "You are a content creator who creates short-form videos to highlight \(contentEditingType). Choose the best moments among the provided videos to create a final video edit plan."
-                
-                var promptText = "Create a final video edit plan that is \(videoLength) seconds long and ready to be posted as a Reel or TikTok. "
-                
-                if !customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    promptText += "Here is some more specific information about the editing style I want to have the final video in: \(customInstructions). "
-                }
-                
-                promptText += "\nHere are the video clips you have access to, in order:\n"
-                for (index, item) in originalClipsWithDurations.enumerated() {
-                    promptText += "- Clip \(index): title: \"\(item.clip.title)\", duration: \(String(format: "%.2f", item.duration)) seconds\n"
-                }
-                
                 let totalUploadedDuration = originalClipsWithDurations.map { $0.duration }.reduce(0, +)
                 let targetLength = min(Double(durationSeconds), totalUploadedDuration)
                 let formattedTargetLength = String(format: "%.2f", targetLength)
-                
-                promptText += "\nGuidelines:\n"
-                promptText += "1. Every start_time must be >= 0 and end_time <= the original video duration. Keep each cut's duration (end_time - start_time) at least 1.0 second.\n"
-                promptText += "2. The total sum of the cut durations must equal \(formattedTargetLength) seconds as closely as possible. The total length of the video must be the smaller of either the specified video length (\(durationSeconds) seconds) or the total length of uploaded video content (\(String(format: "%.2f", totalUploadedDuration)) seconds).\n"
-                promptText += "3. Don't repeat clips in the final video. Each original clip (identified by video_index) must be used at most once.\n"
+                let formattedTotalDuration = String(format: "%.2f", totalUploadedDuration)
+                let trimmedInstructions = customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+                let userDirection = trimmedInstructions.isEmpty
+                    ? "No additional creative direction was provided."
+                    : trimmedInstructions
+                let clipList = originalClipsWithDurations.enumerated().map { index, item in
+                    "- video_index \(index): title \"\(item.clip.title)\", duration \(String(format: "%.2f", item.duration)) seconds"
+                }.joined(separator: "\n")
+
+                let systemInstruction = """
+                You are an expert short-form video editor and shot selector specializing in \(contentEditingType) content. Analyze every attached video in full before choosing any segments. Build a coherent, high-retention edit from the strongest moments across all sources. Base every decision on visible or audible evidence in the footage, use only valid source timestamps, and return only the structured edit plan requested by the response schema.
+                """
+
+                let promptText = """
+                Create a polished edit plan for a Reel or TikTok.
+
+                GOAL
+                - Target final duration: \(formattedTargetLength) seconds.
+                - The user requested \(durationSeconds) seconds, but all uploaded footage totals \(formattedTotalDuration) seconds, so use the target above.
+                - Content category: \(contentEditingType).
+                - User creative direction: \(userDirection)
+
+                SOURCE MAPPING
+                The attached videos appear in the same order as this list. Use the listed zero-based video_index in the response:
+                \(clipList)
+
+                SELECTION PROCESS
+                1. Review every source clip before ranking moments. Do not favor a clip merely because it appears earlier.
+                2. Select moments that are most relevant to the category and the user's creative direction, then prioritize clear subjects, meaningful action, emotion, reveals, transformations, product or environmental details, and visually satisfying motion.
+                3. Prefer footage that is sharp, well exposed, stable enough to watch, and free of accidental obstruction. Avoid setup time, dead air, duplicate action, prolonged static frames, severe blur or shake, and moments where the intended subject is unclear.
+                4. Open with the strongest immediate hook, then arrange clips into a natural progression with context, development, and a satisfying payoff or closing image.
+                5. Create visual variety when the footage supports it: alternate wide, medium, close-up, detail, subject, and environment shots. Avoid adjacent segments that communicate essentially the same thing.
+                6. Cut on natural action, camera movement, visual change, or complete spoken phrases when relevant. Do not begin just before an action starts or end just before its payoff.
+
+                TIMING AND DIVERSITY RULES
+                - Every start_time must be finite and >= 0. Every end_time must be finite, greater than start_time, and <= that source video's listed duration.
+                - Each segment must be at least 1.0 second. Prefer concise 1-4 second segments unless a longer uninterrupted moment is clearly stronger.
+                - Make the sum of all segment durations as close as possible to \(formattedTargetLength) seconds without exceeding it.
+                - Consider moments from every source, but do not include weak footage merely to represent each video.
+                - You may select multiple segments from one source only when they show distinct, valuable moments. Segments from the same source must not overlap or repeat the same action.
+                - Assign placement_order as unique consecutive integers starting at 0, representing the final playback sequence.
+
+                Return the strongest complete edit plan that satisfies these constraints.
+                """
                 
                 // D. Call Gemini GenerateContent REST API with system instructions
                 let jsonResponseText = try await GeminiService.generateContent(apiKey: resolvedApiKey, fileURIs: uploadedFileURIs, promptText: promptText, systemInstruction: systemInstruction)
