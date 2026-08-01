@@ -360,11 +360,11 @@ struct APIKeySetupView: View {
                                 HStack(spacing: 12) {
                                     ZStack {
                                         Circle()
-                                            .fill(Color.accentColor.opacity(0.12))
+                                            .fill(Color.themeButton.opacity(0.12))
                                             .frame(width: 32, height: 32)
                                         Image(systemName: icon)
                                             .font(.system(size: 13, weight: .medium))
-                                            .foregroundColor(.accentColor)
+                                            .foregroundColor(.themeButton)
                                     }
                                     Text(label)
                                         .font(.subheadline)
@@ -751,13 +751,13 @@ struct InstructionsView: View {
                                         .padding(.vertical, 10)
                                         .background(
                                             Capsule()
-                                                .fill(Color.accentColor.opacity(0.08))
+                                                .fill(Color.themeButton.opacity(0.08))
                                         )
                                         .overlay(
                                             Capsule()
-                                                .stroke(Color.accentColor.opacity(0.2), lineWidth: 1.2)
+                                                .stroke(Color.themeButton.opacity(0.2), lineWidth: 1.2)
                                         )
-                                        .foregroundColor(.accentColor)
+                                        .foregroundColor(.themeButton)
                                     }
                                     .buttonStyle(ScaleButtonStyle())
                                 }
@@ -873,19 +873,19 @@ struct ImportClipsView: View {
                                     VStack(spacing: 8) {
                                         Image(systemName: selectedVideos.count >= 10 ? "video.slash" : "video.badge.plus")
                                             .font(.system(size: 28))
-                                            .foregroundColor(selectedVideos.count >= 10 ? .secondary : .accentColor)
+                                            .foregroundColor(selectedVideos.count >= 10 ? .secondary : .themeButton)
                                         Text(selectedVideos.count >= 10 ? "Limit Reached" : "Import Video")
                                             .font(.caption)
                                             .fontWeight(.bold)
-                                            .foregroundColor(selectedVideos.count >= 10 ? .secondary : .accentColor)
+                                            .foregroundColor(selectedVideos.count >= 10 ? .secondary : .themeButton)
                                     }
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 120)
-                                    .background(selectedVideos.count >= 10 ? Color.secondary.opacity(0.08) : Color.accentColor.opacity(0.08))
+                                    .background(selectedVideos.count >= 10 ? Color.secondary.opacity(0.08) : Color.themeButton.opacity(0.08))
                                     .cornerRadius(16)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 16)
-                                            .stroke(selectedVideos.count >= 10 ? Color.secondary.opacity(0.3) : Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                                            .stroke(selectedVideos.count >= 10 ? Color.secondary.opacity(0.3) : Color.themeButton.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
                                     )
                                 }
                                 .disabled(isProcessing || selectedVideos.count >= 10)
@@ -1637,13 +1637,13 @@ struct CategoryCard: View {
             .aspectRatio(1.0, contentMode: .fit) // Square
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(isSelected ? Color.accentColor : Color(.secondarySystemBackground))
+                    .fill(isSelected ? Color.themeButton : Color(.secondarySystemBackground))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                    .stroke(isSelected ? Color.themeButton : Color.clear, lineWidth: 2)
             )
-            .shadow(color: isSelected ? Color.accentColor.opacity(0.3) : Color.black.opacity(0.05), radius: 6, x: 0, y: 4)
+            .shadow(color: isSelected ? Color.themeButton.opacity(0.3) : Color.black.opacity(0.05), radius: 6, x: 0, y: 4)
         }
         .buttonStyle(ScaleButtonStyle())
     }

@@ -971,7 +971,7 @@ struct TimelineClipView: View {
                         )
                     } else {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(isSelected ? Color.accentColor.opacity(0.2) : Color(.secondarySystemBackground))
+                            .fill(isSelected ? Color.themeButton.opacity(0.2) : Color(.secondarySystemBackground))
                     }
 
                     if isSelected {
@@ -994,7 +994,7 @@ struct TimelineClipView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(
-                            justDropped ? Color.green : (isSelected ? Color.accentColor : Color.gray.opacity(0.4)),
+                            justDropped ? Color.green : (isSelected ? Color.themeButton : Color.gray.opacity(0.4)),
                             lineWidth: justDropped ? 2.5 : 1.5
                         )
                 )
@@ -1016,7 +1016,7 @@ struct TimelineClipView: View {
                     HStack {
                         ZStack {
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentColor)
+                                .fill(Color.themeButton)
                                 .frame(width: 20, height: 44)
                                 .shadow(radius: 2)
                             
@@ -1057,7 +1057,7 @@ struct TimelineClipView: View {
                         Spacer()
                         ZStack {
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentColor)
+                                .fill(Color.themeButton)
                                 .frame(width: 20, height: 44)
                                 .shadow(radius: 2)
                             
@@ -1187,4 +1187,3 @@ struct ClipDropDelegate: DropDelegate {
         return DropProposal(operation: .move)
     }
 }
-

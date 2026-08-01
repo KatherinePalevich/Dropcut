@@ -16,6 +16,9 @@ extension Color {
     
     /// Accent safelight glow (vibrant, slightly desaturated)
     static let themeAccent = Color(red: 0.95, green: 0.68, blue: 0.30)
+
+    /// Canonical orange used for interactive controls and button accents.
+    static let themeButton = themeSecondary
 }
 
 extension LinearGradient {

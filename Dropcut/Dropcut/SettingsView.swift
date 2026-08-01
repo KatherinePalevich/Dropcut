@@ -95,7 +95,7 @@ struct SettingsView: View {
                             Image(systemName: "arrow.up.right.square")
                         }
                         .font(.footnote)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.themeButton)
                     }
 
                     Spacer()

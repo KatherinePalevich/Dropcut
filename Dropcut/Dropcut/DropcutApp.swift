@@ -26,6 +26,7 @@ struct DropcutApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .tint(.themeButton)
         }
         .modelContainer(sharedModelContainer)
     }
