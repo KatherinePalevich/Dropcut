@@ -32,8 +32,6 @@ struct VideoEditorView: View {
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
-    @State private var isPromptExpanded = false
-    @State private var isCopied = false
     @State private var showExitDialog = false
     @State private var isSavingProgress = false
     
@@ -227,62 +225,6 @@ struct VideoEditorView: View {
                 }
                 .background(Color(.systemGroupedBackground))
                 .animation(.easeInOut(duration: 0.2), value: selectedVideos.count)
-                
-                if !geminiPrompt.isEmpty {
-                    DisclosureGroup(
-                        isExpanded: $isPromptExpanded,
-                        content: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Spacer()
-                                    Button(action: {
-                                        UIPasteboard.general.string = geminiPrompt
-                                        isCopied = true
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                            isCopied = false
-                                        }
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc")
-                                            Text(isCopied ? "Copied!" : "Copy Prompt")
-                                        }
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(isCopied ? .green : .accentColor)
-                                    }
-                                    .padding(.top, 4)
-                                }
-                                
-                                ScrollView {
-                                    Text(geminiPrompt)
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.leading)
-                                        .padding(8)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .frame(maxHeight: 140)
-                                .background(Color(.tertiarySystemBackground))
-                                .cornerRadius(8)
-                            }
-                        },
-                        label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "sparkles")
-                                    .foregroundColor(.themeSecondary)
-                                Text("Gemini Prompt Debug")
-                                    .font(.subheadline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                    )
-                    .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                }
                 
                 Spacer()
                 
@@ -1245,5 +1187,4 @@ struct ClipDropDelegate: DropDelegate {
         return DropProposal(operation: .move)
     }
 }
-
 
